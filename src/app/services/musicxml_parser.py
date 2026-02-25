@@ -1,5 +1,6 @@
 from __future__ import annotations
-
+import io
+import zipfile
 from dataclasses import dataclass
 from typing import List, Tuple, Optional
 
@@ -42,11 +43,37 @@ def _staff_to_hand_and_label(part_el: stream.Stream, cfg: ParseConfig) -> Tuple[
     # We'll return unknown and let route layer split by part/staff later if needed.
     return Hand.RH, Staff.unknown  # default RH, but mark unknown
 
+def _maybe_decompress_mxl(data: bytes) -> bytes:
+    # MXL is a ZIP container. ZIP files begin with PK\x03\x04.
+    if not data.startswith(b"PK\x03\x04"):
+        return data
+
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        # Try the official container.xml first
+        try:
+            container = zf.read("META-INF/container.xml").decode("utf-8", errors="ignore")
+            # Extremely small, safe parse: find the "full-path" attribute
+            # Example: full-path="score.xml"
+            marker = 'full-path="'
+            i = container.find(marker)
+            if i != -1:
+                j = container.find('"', i + len(marker))
+                inner_path = container[i + len(marker): j]
+                return zf.read(inner_path)
+        except KeyError:
+            pass
+
+        # Fallback: pick the first .xml file that isn't in META-INF
+        xml_files = [n for n in zf.namelist() if n.lower().endswith(".xml") and not n.startswith("META-INF/")]
+        if not xml_files:
+            raise ValueError("MXL archive contains no XML score file")
+        return zf.read(xml_files[0])
 
 def parse_musicxml_to_events(xml_bytes: bytes, cfg: Optional[ParseConfig] = None) -> AnalyzeScoreResponse:
     cfg = cfg or ParseConfig()
     warnings: List[str] = []
 
+    xml_bytes = _maybe_decompress_mxl(xml_bytes)
     score = converter.parseData(xml_bytes)
 
     # Basic sanity: expect a piano score-ish structure
