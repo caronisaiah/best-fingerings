@@ -13,4 +13,7 @@ venv/
 
 # OS / Editor
 .DS_Store
-.vscode/
+.vscode/.env
+
+# Local env
+.env
