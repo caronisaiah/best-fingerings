@@ -104,6 +104,9 @@ def parse_musicxml_to_events(xml_bytes: bytes, cfg: Optional[ParseConfig] = None
             # Onset and duration in quarterLength units
             t = float(el.offset)
             dur = float(el.duration.quarterLength)
+            if dur <= 0:
+                warnings.append(f"ZERO_DURATION_EVENT_SKIPPED_V1:t={t}")
+                continue
 
             meas_num = None
             try:
