@@ -1,15 +1,23 @@
 from __future__ import annotations
 
-from typing import Dict, List, Literal, Union
+from typing import Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
-from app.models.events import Hand
+from app.models.events import Hand, Staff
 
 
 class FingeringBase(BaseModel):
     event_id: int
     hand: Hand
+    staff: Staff
+    measure: Optional[int] = Field(default=None, ge=1)
+    voice: Optional[Union[str, int]] = None
+
+    # Anchors for OSMD overlay (measure-local)
+    t_meas_beats: float = Field(..., ge=0)
+    idx_meas_voice: int = Field(..., ge=0)
+
     type: Literal["note", "chord"]
 
 
@@ -40,4 +48,4 @@ class FingeringsResponse(BaseModel):
     hands: Dict[str, List[FingeringEvent]]  # keys: "RH", "LH"
     stats: Dict[str, Union[int, float, str]]
     warnings: List[str] = []
-    algorithm_version: str  # required; set by fingering_engine
+    algorithm_version: str

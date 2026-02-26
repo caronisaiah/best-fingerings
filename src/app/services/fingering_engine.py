@@ -6,7 +6,7 @@ from typing import List, Tuple
 from app.models.events import ChordEvent, Event, Hand, NoteEvent
 from app.models.fingerings import ChordFingering, FingeringsResponse, NoteFingering
 
-ALGO_VERSION = "0.0.2-greedy"
+ALGO_VERSION = "0.0.2-greedy+anchors"
 
 
 def _is_black_key(pitch_midi: int) -> bool:
@@ -103,6 +103,11 @@ def generate_fingerings_for_hand(hand: Hand, events: List[Event]) -> Tuple[List[
                 NoteFingering(
                     event_id=e.event_id,
                     hand=hand,
+                    staff=e.staff,
+                    measure=e.measure,
+                    voice=e.voice,
+                    t_meas_beats=e.t_meas_beats,
+                    idx_meas_voice=e.idx_meas_voice,
                     type="note",
                     pitch_midi=e.pitch_midi,
                     fingering=f,
@@ -121,6 +126,11 @@ def generate_fingerings_for_hand(hand: Hand, events: List[Event]) -> Tuple[List[
                 ChordFingering(
                     event_id=e.event_id,
                     hand=hand,
+                    staff=e.staff,
+                    measure=e.measure,
+                    voice=e.voice,
+                    t_meas_beats=e.t_meas_beats,
+                    idx_meas_voice=e.idx_meas_voice,
                     type="chord",
                     pitches_midi=pitches_sorted,
                     fingerings=fingers,
