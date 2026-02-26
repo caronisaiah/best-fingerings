@@ -22,9 +22,11 @@ class EventBase(BaseModel):
     hand: Hand
     staff: Staff
     t_beats: float = Field(..., ge=0)
+    t_meas_beats: float = Field(..., ge=0)          # NEW
     duration_beats: float = Field(..., gt=0)
     measure: Optional[int] = Field(default=None, ge=1)
     voice: Optional[Union[str, int]] = None
+    idx_meas_voice: int = Field(..., ge=0)          # NEW
 
 
 class NoteEvent(EventBase):

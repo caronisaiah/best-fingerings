@@ -8,6 +8,7 @@ from music21 import converter, note, chord, stream
 
 from app.models.events import (
     AnalyzeHandsResponse,
+    Event,
     Hand,
     Staff,
     NoteEvent,
@@ -94,6 +95,9 @@ def parse_musicxml_to_events(xml_bytes: bytes, cfg: Optional[ParseConfig] = None
     events: List[Event] = []
     event_id = 0
 
+    # NEW: per-measure/voice/hand index counter for stable anchors
+    idx_counter = {}  # key: (measure, staff, voice, hand) -> next idx
+
     for p_idx, part in enumerate(parts):
         hand_guess, staff_label = _staff_to_hand_and_label(part, cfg)
 
@@ -105,6 +109,7 @@ def parse_musicxml_to_events(xml_bytes: bytes, cfg: Optional[ParseConfig] = None
             if el.isRest:
                 continue
 
+            # Global onset and duration in quarterLength units
             t = _abs_offset_in_part(el, part)
             dur = float(el.duration.quarterLength)
             if dur <= 0:
@@ -127,6 +132,18 @@ def parse_musicxml_to_events(xml_bytes: bytes, cfg: Optional[ParseConfig] = None
             except Exception:
                 voice_val = None
 
+            # NEW: measure-local onset + idx within (measure, staff, voice, hand)
+            t_meas = float(el.offset)
+
+            key = (
+                meas_num,
+                staff_label.value,
+                str(voice_val),
+                hand_guess.value,
+            )
+            idx = idx_counter.get(key, 0)
+            idx_counter[key] = idx + 1
+
             if isinstance(el, note.Note):
                 events.append(
                     NoteEvent(
@@ -134,9 +151,11 @@ def parse_musicxml_to_events(xml_bytes: bytes, cfg: Optional[ParseConfig] = None
                         hand=hand_guess,
                         staff=staff_label,
                         t_beats=t,
+                        t_meas_beats=t_meas,      # NEW
                         duration_beats=dur,
                         measure=meas_num,
                         voice=voice_val,
+                        idx_meas_voice=idx,       # NEW
                         pitch_midi=int(el.pitch.midi),
                     )
                 )
@@ -151,9 +170,11 @@ def parse_musicxml_to_events(xml_bytes: bytes, cfg: Optional[ParseConfig] = None
                             hand=hand_guess,
                             staff=staff_label,
                             t_beats=t,
+                            t_meas_beats=t_meas,  # NEW
                             duration_beats=dur,
                             measure=meas_num,
                             voice=voice_val,
+                            idx_meas_voice=idx,   # NEW
                             pitch_midi=int(pitches[0]),
                         )
                     )
@@ -164,29 +185,37 @@ def parse_musicxml_to_events(xml_bytes: bytes, cfg: Optional[ParseConfig] = None
                             hand=hand_guess,
                             staff=staff_label,
                             t_beats=t,
+                            t_meas_beats=t_meas,  # NEW
                             duration_beats=dur,
                             measure=meas_num,
                             voice=voice_val,
+                            idx_meas_voice=idx,   # NEW
                             pitches_midi=pitches,
                         )
                     )
                 event_id += 1
-
             else:
                 warnings.append(f"UNSUPPORTED_ELEMENT_TYPE:{type(el).__name__}")
 
-    # Stable sort: time first; then hand; then measure/voice (if present); then event_id
+    # Stable sort: global time -> hand -> measure -> voice -> measure-local time -> idx -> event_id
     def _voice_key(v):
-        if v is None:
-            return ""
-        return str(v)
+        return "" if v is None else str(v)
 
-    events.sort(key=lambda e: (e.t_beats, e.hand.value, (e.measure or 0), _voice_key(e.voice), e.event_id))
+    events.sort(
+        key=lambda e: (
+            e.t_beats,
+            e.hand.value,
+            (e.measure or 0),
+            _voice_key(e.voice),
+            e.t_meas_beats,
+            e.idx_meas_voice,
+            e.event_id,
+        )
+    )
 
     rh_events = [e for e in events if e.hand == Hand.RH]
     lh_events = [e for e in events if e.hand == Hand.LH]
 
-    # Optional: warn if staff_label was unknown a lot (signals parsing ambiguity)
     unknown_staff_count = sum(1 for e in events if e.staff == Staff.unknown)
     if unknown_staff_count:
         warnings.append(f"UNKNOWN_STAFF_EVENTS_V1:count={unknown_staff_count}")
