@@ -38,8 +38,8 @@ def test_offsets_increase_across_measures():
     files = {"file": ("two.musicxml", TWO_MEASURE_XML, "application/xml")}
     r = client.post("/analyze-score", files=files)
     assert r.status_code == 200, r.text
-    events = r.json()["events"]
-    # should be at least 2 note events with increasing t_beats
+    body = r.json()
+    events = body["hands"]["RH"] + body["hands"]["LH"]
     ts = [e["t_beats"] for e in events if e["type"] == "note"]
     assert len(ts) >= 2
     assert ts[1] > ts[0]

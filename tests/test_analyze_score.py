@@ -34,5 +34,7 @@ def test_analyze_score_ok():
     r = client.post("/analyze-score", files=files)
     assert r.status_code == 200, r.text
     body = r.json()
-    assert "events" in body
-    assert body["stats"]["event_count"] >= 1
+    assert "hands" in body
+    assert "RH" in body["hands"]
+    assert "LH" in body["hands"]
+    assert body["stats"]["overall"]["event_count"] >= 1

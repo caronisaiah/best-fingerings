@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+from typing import Dict
 from enum import Enum
 from typing import List, Optional, Union
 
@@ -39,8 +39,7 @@ class ChordEvent(EventBase):
 
 Event = Union[NoteEvent, ChordEvent]
 
-
-class AnalyzeScoreResponse(BaseModel):
-    events: List[Event]
+class AnalyzeHandsResponse(BaseModel):
+    hands: Dict[str, List[Event]]  # {"RH": [...], "LH": [...]}
     stats: dict
     warnings: List[str]

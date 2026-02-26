@@ -7,7 +7,7 @@ from typing import List, Tuple, Optional
 from music21 import converter, note, chord, stream
 
 from app.models.events import (
-    AnalyzeScoreResponse,
+    AnalyzeHandsResponse,
     Hand,
     Staff,
     NoteEvent,
@@ -80,39 +80,31 @@ def _maybe_decompress_mxl(data: bytes) -> bytes:
             raise ValueError("MXL archive contains no XML score file")
         return zf.read(xml_files[0])
 
-def parse_musicxml_to_events(xml_bytes: bytes, cfg: Optional[ParseConfig] = None) -> AnalyzeScoreResponse:
+def parse_musicxml_to_events(xml_bytes: bytes, cfg: Optional[ParseConfig] = None) -> AnalyzeHandsResponse:
     cfg = cfg or ParseConfig()
     warnings: List[str] = []
 
     xml_bytes = _maybe_decompress_mxl(xml_bytes)
     score = converter.parseData(xml_bytes)
 
-    # Basic sanity: expect a piano score-ish structure
     parts = list(score.parts) if hasattr(score, "parts") else []
     if not parts:
-        # music21 might represent it differently; still attempt recursion
         parts = [score]
 
-    events = []
+    events: List[Event] = []
     event_id = 0
 
-    # We’ll parse beat offsets (music21 offsets are quarterLength-based)
-    # beat == quarterLength in 4/4. In other meters it’s still a consistent score unit.
-    # For v1 we treat quarterLength as "beat units" (stable for DP).
     for p_idx, part in enumerate(parts):
         hand_guess, staff_label = _staff_to_hand_and_label(part, cfg)
 
-        # If multiple clefs exist, warn. This is where cross-staff/clef-changes happen.
         clefs = list(part.recurse().getElementsByClass("Clef"))
         if len({(getattr(c, "sign", None), getattr(c, "line", None)) for c in clefs}) > 1:
             warnings.append(f"PART_{p_idx}:CLEF_CHANGES_DETECTED_V1")
 
-        # Notes + chords
         for el in part.recurse().notesAndRests:
             if el.isRest:
                 continue
 
-            # Onset and duration in quarterLength units
             t = _abs_offset_in_part(el, part)
             dur = float(el.duration.quarterLength)
             if dur <= 0:
@@ -149,10 +141,10 @@ def parse_musicxml_to_events(xml_bytes: bytes, cfg: Optional[ParseConfig] = None
                     )
                 )
                 event_id += 1
+
             elif isinstance(el, chord.Chord):
                 pitches = sorted(int(p.midi) for p in el.pitches)
                 if len(pitches) < 2:
-                    # chord with 1 pitch is effectively a note; treat as note
                     events.append(
                         NoteEvent(
                             event_id=event_id,
@@ -179,20 +171,41 @@ def parse_musicxml_to_events(xml_bytes: bytes, cfg: Optional[ParseConfig] = None
                         )
                     )
                 event_id += 1
+
             else:
                 warnings.append(f"UNSUPPORTED_ELEMENT_TYPE:{type(el).__name__}")
 
-    # Sort events by time, then by hand for stability
-    events.sort(key=lambda e: (e.t_beats, e.hand.value, e.event_id))
+    # Stable sort: time first; then hand; then measure/voice (if present); then event_id
+    def _voice_key(v):
+        if v is None:
+            return ""
+        return str(v)
+
+    events.sort(key=lambda e: (e.t_beats, e.hand.value, (e.measure or 0), _voice_key(e.voice), e.event_id))
+
+    rh_events = [e for e in events if e.hand == Hand.RH]
+    lh_events = [e for e in events if e.hand == Hand.LH]
+
+    # Optional: warn if staff_label was unknown a lot (signals parsing ambiguity)
+    unknown_staff_count = sum(1 for e in events if e.staff == Staff.unknown)
+    if unknown_staff_count:
+        warnings.append(f"UNKNOWN_STAFF_EVENTS_V1:count={unknown_staff_count}")
+
+    def _counts(evts: List[Event]) -> dict:
+        return {
+            "event_count": len(evts),
+            "note_count": sum(1 for e in evts if getattr(e, "type", "") == "note"),
+            "chord_count": sum(1 for e in evts if getattr(e, "type", "") == "chord"),
+        }
 
     stats = {
-        "event_count": len(events),
-        "note_count": sum(1 for e in events if getattr(e, "type", "") == "note"),
-        "chord_count": sum(1 for e in events if getattr(e, "type", "") == "chord"),
-        "hands": {
-            "RH": sum(1 for e in events if e.hand == Hand.RH),
-            "LH": sum(1 for e in events if e.hand == Hand.LH),
-        },
+        "overall": _counts(events),
+        "RH": _counts(rh_events),
+        "LH": _counts(lh_events),
     }
 
-    return AnalyzeScoreResponse(events=events, stats=stats, warnings=warnings)
+    return AnalyzeHandsResponse(
+        hands={"RH": rh_events, "LH": lh_events},
+        stats=stats,
+        warnings=warnings,
+    )
