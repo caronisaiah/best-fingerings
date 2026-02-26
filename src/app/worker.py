@@ -9,6 +9,7 @@ from app.services.jobs_repo import update_job, put_cache
 from app.services.musicxml_parser import parse_musicxml_to_events
 from app.services.fingering_engine import generate_fingerings
 
+
 def main():
     require_env()
     sqs = sqs_client()
@@ -44,8 +45,11 @@ def main():
 
             t0 = time.time()
             analysis = parse_musicxml_to_events(xml_bytes)
-            fingerings = generate_fingerings(analysis.hands)
             parse_ms = int((time.time() - t0) * 1000)
+
+            t1 = time.time()
+            fingerings = generate_fingerings(analysis.hands)
+            optimize_ms = int((time.time() - t1) * 1000)
 
             result_payload = {
                 "job_id": job_id,
@@ -64,7 +68,13 @@ def main():
             )
 
             put_cache(score_hash, config_hash, result_key)
-            update_job(job_id, status="SUCCEEDED", result_s3_key=result_key, parse_ms=str(parse_ms), optimize_ms="0")
+            update_job(
+                job_id,
+                status="SUCCEEDED",
+                result_s3_key=result_key,
+                parse_ms=str(parse_ms),
+                optimize_ms=str(optimize_ms),
+            )
 
             sqs.delete_message(QueueUrl=SQS_QUEUE_URL, ReceiptHandle=receipt)
             print(f"SUCCEEDED job={job_id} result={result_key}")
@@ -73,6 +83,7 @@ def main():
             update_job(job_id, status="FAILED", error=f"{type(e).__name__}: {e}")
             # Don't delete message so SQS retries; DLQ after max receives
             print(f"FAILED job={job_id} err={type(e).__name__}: {e}")
+
 
 if __name__ == "__main__":
     main()

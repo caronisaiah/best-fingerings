@@ -8,16 +8,25 @@ from fastapi import APIRouter, File, UploadFile, HTTPException
 
 from app.core.config import S3_BUCKET, SQS_QUEUE_URL, require_env
 from app.services.aws_clients import s3_client, sqs_client
+from app.services.fingering_engine import ALGO_VERSION
 from app.services.jobs_repo import get_cache, put_job
 
 router = APIRouter()
 
+
 def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
+
 def config_hash_from_params(difficulty: str, style_bias: str) -> str:
-    payload = {"difficulty": difficulty, "style_bias": style_bias}
+    # IMPORTANT: include algorithm version so cache invalidates when fingering logic changes
+    payload = {
+        "difficulty": difficulty,
+        "style_bias": style_bias,
+        "algorithm_version": ALGO_VERSION,
+    }
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
+
 
 @router.post("/fingerings")
 async def fingerings(
