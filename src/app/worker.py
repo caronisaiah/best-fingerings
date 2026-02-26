@@ -7,6 +7,7 @@ from app.core.config import require_env, S3_BUCKET, SQS_QUEUE_URL
 from app.services.aws_clients import s3_client, sqs_client
 from app.services.jobs_repo import update_job, put_cache
 from app.services.musicxml_parser import parse_musicxml_to_events
+from app.services.fingering_engine import generate_fingerings
 
 def main():
     require_env()
@@ -43,6 +44,7 @@ def main():
 
             t0 = time.time()
             analysis = parse_musicxml_to_events(xml_bytes)
+            fingerings = generate_fingerings(analysis.hands)
             parse_ms = int((time.time() - t0) * 1000)
 
             result_payload = {
@@ -50,8 +52,7 @@ def main():
                 "score_hash": score_hash,
                 "config_hash": config_hash,
                 "analysis": analysis.model_dump(),
-                "fingerings": None,
-                "note": "Optimizer not implemented yet; returning canonical events for now.",
+                "fingerings": fingerings.model_dump(),
             }
 
             result_key = f"results/{score_hash}/{config_hash}/fingerings.json"
