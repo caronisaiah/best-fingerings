@@ -43,6 +43,17 @@ def _staff_to_hand_and_label(part_el: stream.Stream, cfg: ParseConfig) -> Tuple[
     # We'll return unknown and let route layer split by part/staff later if needed.
     return Hand.RH, Staff.unknown  # default RH, but mark unknown
 
+def _abs_offset_in_part(el, part) -> float:
+    """
+    Get a global onset in quarterLength units relative to the start of the part.
+    This avoids measure-local offsets that often appear when iterating recurse().
+    """
+    try:
+        return float(el.getOffsetInHierarchy(part))
+    except Exception:
+        # Fallback if hierarchy lookup fails
+        return float(el.offset)
+
 def _maybe_decompress_mxl(data: bytes) -> bytes:
     # MXL is a ZIP container. ZIP files begin with PK\x03\x04.
     if not data.startswith(b"PK\x03\x04"):
@@ -102,7 +113,7 @@ def parse_musicxml_to_events(xml_bytes: bytes, cfg: Optional[ParseConfig] = None
                 continue
 
             # Onset and duration in quarterLength units
-            t = float(el.offset)
+            t = _abs_offset_in_part(el, part)
             dur = float(el.duration.quarterLength)
             if dur <= 0:
                 warnings.append(f"ZERO_DURATION_EVENT_SKIPPED_V1:t={t}")
