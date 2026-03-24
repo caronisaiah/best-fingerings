@@ -41,6 +41,23 @@ function toErrorMessage(error: unknown) {
   return String(error);
 }
 
+function humanStatus(status: Status) {
+  switch (status) {
+    case "uploading":
+      return "Uploading";
+    case "queued":
+      return "Queued";
+    case "running":
+      return "Generating";
+    case "done":
+      return "Ready";
+    case "error":
+      return "Attention needed";
+    default:
+      return "Ready";
+  }
+}
+
 export default function App() {
   const [file, setFile] = useState<File | null>(null);
   const [difficulty, setDifficulty] = useState("standard");
@@ -100,6 +117,38 @@ export default function App() {
 
   const stats = (displayPayload?.fingerings?.stats ?? {}) as Record<string, number | string>;
   const deferredAnnotatedXml = useDeferredValue(annotatedXml);
+
+  const selectedHistory = useMemo(() => {
+    const items: Array<{ key: string; label: string; meta: string; tone: "edit" | "lock" }> = [];
+
+    Object.entries(manualEdits)
+      .slice(-4)
+      .reverse()
+      .forEach(([noteId, finger]) => {
+        const item = editorItems.find((entry) => entry.noteId === noteId);
+        items.push({
+          key: `edit-${noteId}`,
+          label: `Set fingering ${finger}`,
+          meta: item ? `${item.label}` : "Edited note",
+          tone: "edit",
+        });
+      });
+
+    Object.entries(lockedNoteFingerings)
+      .slice(-4)
+      .reverse()
+      .forEach(([noteId, finger]) => {
+        const item = editorItems.find((entry) => entry.noteId === noteId);
+        items.push({
+          key: `lock-${noteId}`,
+          label: `Locked to ${finger}`,
+          meta: item ? `${item.label}` : "Locked note",
+          tone: "lock",
+        });
+      });
+
+    return items.slice(0, 6);
+  }, [editorItems, lockedNoteFingerings, manualEdits]);
 
   useEffect(() => {
     setPageIndex(0);
@@ -304,126 +353,204 @@ export default function App() {
   const canRun = status !== "uploading" && status !== "queued" && status !== "running";
   const lockCount = Object.keys(lockedNoteFingerings).length;
   const localEditCount = Object.keys(manualEdits).length;
+  const scoreName = file ? file.name.replace(/\.(xml|musicxml|mxl)$/i, "") : "No score loaded";
+  const composerLabel = file ? "Imported MusicXML score" : "Upload MusicXML or MXL to begin";
 
   return (
     <div className="appShell">
       <header className="topbar">
-        <div>
-          <div className="eyebrow">Best Fingerings</div>
-          <h1 className="brandTitle">Deterministic piano fingerings with editable score output</h1>
-          <p className="brandSub">
-            Upload MusicXML, generate fingerings, inspect the full score, then edit and lock notes before the next regenerate.
-          </p>
+        <div className="topbarBrand">
+          <div className="brandLockup">
+            <div className="brandMark">BF</div>
+            <div>
+              <div className="brandName">Best Fingerings</div>
+              <div className="brandTag">Professional piano fingering workspace</div>
+            </div>
+          </div>
+
+          <nav className="topNav" aria-label="Workspace sections">
+            <button type="button" className="topNavItem topNavItem-active">Score</button>
+            <button type="button" className="topNavItem">Generate</button>
+            <button type="button" className="topNavItem">Inspect</button>
+          </nav>
         </div>
 
-        <div className="statusCluster">
-          <div className="statusPill">
+        <div className="topbarActions">
+          <div className={`statusBadge statusBadge-${status}`}>
             <span className={`dot dot-${status}`} />
-            <span>{status}</span>
-            {jobId ? <span className="muted">job {jobId.slice(0, 8)}...</span> : null}
+            <span>{humanStatus(status)}</span>
+            {jobId ? <span className="statusMeta">job {jobId.slice(0, 8)}...</span> : null}
           </div>
-          <div className="miniStat">
-            <span className="miniLabel">Locks</span>
-            <strong>{lockCount}</strong>
-          </div>
-          <div className="miniStat">
-            <span className="miniLabel">Local edits</span>
-            <strong>{localEditCount}</strong>
-          </div>
+
+          <button className="topGenerateBtn" onClick={onSubmit} disabled={!canRun}>
+            {serverPayload ? "Regenerate Fingerings" : "Generate Fingerings"}
+          </button>
         </div>
       </header>
 
-      <div className="workspace">
-        <main className="scorePane">
-          <section className="controlBar">
-            <div className="controlGrid">
-              <label className="field field-file">
-                <span>Score</span>
-                <input
-                  className="fileInput"
-                  type="file"
-                  accept=".xml,.musicxml,.mxl"
-                  onChange={(e) => onFileChange(e.target.files?.[0] ?? null)}
+      <div className="workspaceShell">
+        <aside className="leftRail">
+          <div className="railPanel">
+            <div className="railLabel">Current Project</div>
+            <div className="projectCard">
+              <div className="projectTitle">{scoreName}</div>
+              <div className="projectSub">{composerLabel}</div>
+            </div>
+          </div>
+
+          <div className="railPanel">
+            <div className="railLabel">Algorithm Parameters</div>
+
+            <label className="stackField">
+              <span>Difficulty</span>
+              <select value={difficulty} onChange={(e) => setDifficulty(e.target.value)}>
+                <option value="easy">Easy</option>
+                <option value="standard">Standard</option>
+                <option value="hard">Advanced</option>
+              </select>
+            </label>
+
+            <label className="stackField">
+              <span>Style Bias</span>
+              <select value={styleBias} onChange={(e) => setStyleBias(e.target.value)}>
+                <option value="legato">Legato</option>
+                <option value="neutral">Neutral</option>
+                <option value="staccato">Staccato</option>
+              </select>
+            </label>
+
+            <label className="stackField">
+              <span>Hand Size</span>
+              <select value={handSize} onChange={(e) => setHandSize(e.target.value)}>
+                <option value="small">Small</option>
+                <option value="medium">Standard</option>
+                <option value="large">Large</option>
+              </select>
+            </label>
+
+            <label className="stackField">
+              <span>Articulation</span>
+              <select value={articulationBias} onChange={(e) => setArticulationBias(e.target.value)}>
+                <option value="auto">Auto</option>
+                <option value="legato">Legato</option>
+                <option value="neutral">Neutral</option>
+                <option value="staccato">Staccato</option>
+              </select>
+            </label>
+
+            <label className="forceToggle">
+              <input type="checkbox" checked={forceRecompute} onChange={(e) => setForceRecompute(e.target.checked)} />
+              <span>Force recompute instead of returning a cached result</span>
+            </label>
+          </div>
+
+          <div className="railPanel">
+            <div className="railLabel">Score Input</div>
+            <label className="uploadCard">
+              <input
+                className="hiddenInput"
+                type="file"
+                accept=".xml,.musicxml,.mxl"
+                onChange={(e) => onFileChange(e.target.files?.[0] ?? null)}
+              />
+              <span className="uploadIcon">+</span>
+              <span className="uploadTitle">{file ? "Replace MusicXML" : "Upload MusicXML"}</span>
+              <span className="uploadSub">Drag and drop or browse for a piano score</span>
+            </label>
+          </div>
+
+          <div className="railFooter">
+            <div className="footerPill">
+              <span className="footerPillLabel">Locks</span>
+              <strong>{lockCount}</strong>
+            </div>
+            <div className="footerPill">
+              <span className="footerPillLabel">Local edits</span>
+              <strong>{localEditCount}</strong>
+            </div>
+          </div>
+        </aside>
+
+        <main className="scoreStage">
+          <section className="scoreHero">
+            <div className="heroText">
+              <div className="heroEyebrow">Notation Workspace</div>
+              <h1>{scoreName}</h1>
+              <p>
+                Generate deterministic fingerings, inspect them on the score, then lock and refine noteheads before the
+                next regenerate.
+              </p>
+            </div>
+
+            <div className="heroStats">
+              <div className="heroStat">
+                <span>RH outputs</span>
+                <strong>{stats.rh_fingerings ?? 0}</strong>
+              </div>
+              <div className="heroStat">
+                <span>LH outputs</span>
+                <strong>{stats.lh_fingerings ?? 0}</strong>
+              </div>
+              <div className="heroStat">
+                <span>Warnings</span>
+                <strong>{warnings.length}</strong>
+              </div>
+            </div>
+          </section>
+
+          {err ? <div className="errorBox">{err}</div> : null}
+
+          <section className="scoreViewport">
+            <div className="scoreViewportInner">
+              {!deferredAnnotatedXml ? (
+                <div className="emptyState">
+                  <div className="emptyInner">
+                    <div className="emptyEyebrow">Ready for import</div>
+                    <h2>Bring in a score and build from there</h2>
+                    <p>
+                      The live notation view will appear here once a MusicXML or MXL score has been loaded and fingerings
+                      have been generated.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <ScoreView
+                  xmlText={deferredAnnotatedXml}
+                  viewMode={viewMode}
+                  pageIndex={pageIndex}
+                  zoom={zoom}
+                  onPageCountChange={(count) => {
+                    setPageCount(count || 1);
+                    setPageIndex((current) => Math.min(current, Math.max(0, (count || 1) - 1)));
+                  }}
                 />
-              </label>
-
-              <label className="field">
-                <span>Difficulty</span>
-                <select value={difficulty} onChange={(e) => setDifficulty(e.target.value)}>
-                  <option value="easy">easy</option>
-                  <option value="standard">standard</option>
-                  <option value="hard">hard</option>
-                </select>
-              </label>
-
-              <label className="field">
-                <span>Style bias</span>
-                <select value={styleBias} onChange={(e) => setStyleBias(e.target.value)}>
-                  <option value="neutral">neutral</option>
-                  <option value="legato">legato</option>
-                  <option value="staccato">staccato</option>
-                </select>
-              </label>
-
-              <label className="field">
-                <span>Hand size</span>
-                <select value={handSize} onChange={(e) => setHandSize(e.target.value)}>
-                  <option value="small">small</option>
-                  <option value="medium">medium</option>
-                  <option value="large">large</option>
-                </select>
-              </label>
-
-              <label className="field">
-                <span>Articulation</span>
-                <select value={articulationBias} onChange={(e) => setArticulationBias(e.target.value)}>
-                  <option value="auto">auto</option>
-                  <option value="legato">legato</option>
-                  <option value="staccato">staccato</option>
-                  <option value="neutral">neutral</option>
-                </select>
-              </label>
+              )}
             </div>
 
-            <div className="controlRow">
-              <label className="checkbox">
-                <input type="checkbox" checked={forceRecompute} onChange={(e) => setForceRecompute(e.target.checked)} />
-                <span>Force recompute</span>
-              </label>
-
-              <button className="primaryBtn" onClick={onSubmit} disabled={!canRun}>
-                {serverPayload ? "Regenerate" : "Generate"}
-              </button>
-
-              {resultUrl ? (
-                <a className="ghostLink" href={resultUrl} target="_blank" rel="noreferrer">
-                  Download JSON
-                </a>
-              ) : null}
-
-              {annotatedXml ? (
+            <div className="floatingToolbar">
+              <div className="toolbarSection">
                 <button
-                  className="ghostBtn"
                   type="button"
-                  onClick={() => downloadText(xmlDownloadName(file), annotatedXml, "application/xml")}
+                  className={`toolbarModeBtn ${viewMode === "page" ? "toolbarModeBtn-active" : ""}`}
+                  onClick={() => setViewMode("page")}
                 >
-                  Download MusicXML
+                  Page
                 </button>
-              ) : null}
-            </div>
+                <button
+                  type="button"
+                  className={`toolbarModeBtn ${viewMode === "scroll" ? "toolbarModeBtn-active" : ""}`}
+                  onClick={() => setViewMode("scroll")}
+                >
+                  Scroll
+                </button>
+              </div>
 
-            <div className="viewerBar">
-              <label className="field compactField">
-                <span>View</span>
-                <select value={viewMode} onChange={(e) => setViewMode(e.target.value as ViewMode)}>
-                  <option value="page">page</option>
-                  <option value="scroll">scroll</option>
-                </select>
-              </label>
+              <div className="toolbarDivider" />
 
-              <label className="field rangeField">
-                <span>Zoom</span>
+              <div className="toolbarSection toolbarSection-wide">
+                <span className="toolbarLabel">Zoom</span>
                 <input
+                  className="zoomRange"
                   type="range"
                   min={0.7}
                   max={1.6}
@@ -431,104 +558,96 @@ export default function App() {
                   value={zoom}
                   onChange={(e) => setZoom(parseFloat(e.target.value))}
                 />
-              </label>
+                <span className="toolbarValue">{Math.round(zoom * 100)}%</span>
+              </div>
+
+              <div className="toolbarDivider" />
 
               {viewMode === "page" ? (
-                <div className="pager">
-                  <button
-                    className="ghostBtn"
-                    onClick={() => setPageIndex((p) => Math.max(0, p - 1))}
-                    disabled={pageIndex <= 0}
-                  >
-                    Prev
-                  </button>
-                  <div className="pageLabel">
-                    Page <strong>{pageIndex + 1}</strong> / {pageCount}
+                <>
+                  <div className="toolbarSection">
+                    <button
+                      type="button"
+                      className="toolbarGhostBtn"
+                      onClick={() => setPageIndex((p) => Math.max(0, p - 1))}
+                      disabled={pageIndex <= 0}
+                    >
+                      Prev
+                    </button>
+                    <span className="toolbarValue">
+                      {pageIndex + 1}/{pageCount}
+                    </span>
+                    <button
+                      type="button"
+                      className="toolbarGhostBtn"
+                      onClick={() => setPageIndex((p) => Math.min(pageCount - 1, p + 1))}
+                      disabled={pageIndex >= pageCount - 1}
+                    >
+                      Next
+                    </button>
                   </div>
-                  <button
-                    className="ghostBtn"
-                    onClick={() => setPageIndex((p) => Math.min(pageCount - 1, p + 1))}
-                    disabled={pageIndex >= pageCount - 1}
-                  >
-                    Next
-                  </button>
-                </div>
+                  <div className="toolbarDivider" />
+                </>
               ) : null}
 
-              <div className="metaRow">
-                {resultKey ? <code className="resultKey">{resultKey}</code> : null}
+              <div className="toolbarSection">
+                {annotatedXml ? (
+                  <button
+                    className="toolbarExportBtn"
+                    type="button"
+                    onClick={() => downloadText(xmlDownloadName(file), annotatedXml, "application/xml")}
+                  >
+                    MusicXML
+                  </button>
+                ) : null}
+                {resultUrl ? (
+                  <a className="toolbarExportBtn toolbarExportBtn-muted" href={resultUrl} target="_blank" rel="noreferrer">
+                    JSON
+                  </a>
+                ) : null}
               </div>
             </div>
-          </section>
-
-          {err ? <div className="errorBox">{err}</div> : null}
-
-          <section className="scoreCard">
-            {!deferredAnnotatedXml ? (
-              <div className="emptyState">
-                <h2>Ready for a score</h2>
-                <p>Upload a MusicXML or MXL file, choose preferences, and generate fingerings.</p>
-              </div>
-            ) : (
-              <ScoreView
-                xmlText={deferredAnnotatedXml}
-                viewMode={viewMode}
-                pageIndex={pageIndex}
-                zoom={zoom}
-                onPageCountChange={(count) => {
-                  setPageCount(count || 1);
-                  setPageIndex((current) => Math.min(current, Math.max(0, (count || 1) - 1)));
-                }}
-              />
-            )}
           </section>
         </main>
 
-        <aside className="inspectorPane">
-          <section className="panel">
-            <div className="panelTitle">Generation summary</div>
-            <div className="summaryGrid">
-              <div className="summaryCard">
-                <span>Total noteheads</span>
-                <strong>{editorItems.length}</strong>
-              </div>
-              <div className="summaryCard">
-                <span>Locked noteheads</span>
-                <strong>{lockCount}</strong>
-              </div>
-              <div className="summaryCard">
-                <span>RH outputs</span>
-                <strong>{stats.rh_fingerings ?? 0}</strong>
-              </div>
-              <div className="summaryCard">
-                <span>LH outputs</span>
-                <strong>{stats.lh_fingerings ?? 0}</strong>
-              </div>
-            </div>
-          </section>
-
-          <section className="panel">
-            <div className="panelTitle">Selected note</div>
+        <aside className="rightRail">
+          <div className="railPanel">
+            <div className="railLabel">Note Inspector</div>
             {!selectedItem ? (
-              <div className="panelEmpty">Generate fingerings to start editing.</div>
+              <div className="emptyPanel">Generate fingerings to inspect and edit noteheads.</div>
             ) : (
-              <div className="editorCard">
-                <div className="editorMeta">
-                  <div className="editorLabel">{selectedItem.label}</div>
-                  <div className="editorSub">
-                    pitch {selectedItem.pitchMidi}
-                    {selectedItem.kind === "chord-note"
-                      ? ` | chord tone ${Number(selectedItem.chordIndex) + 1}/${selectedItem.chordSize}`
-                      : ""}
+              <div className="inspectorCard">
+                <div className="inspectorHeader">
+                  <div>
+                    <div className="inspectorPitch">{selectedItem.pitchMidi}</div>
+                    <div className="inspectorSub">
+                      {selectedItem.kind === "chord-note"
+                        ? `Chord tone ${Number(selectedItem.chordIndex) + 1} of ${selectedItem.chordSize}`
+                        : "Single note"}
+                    </div>
+                  </div>
+                  <button className="lockIconBtn" type="button" onClick={() => toggleLock(selectedItem)}>
+                    {selectedItem.locked ? "Unlock" : "Lock"}
+                  </button>
+                </div>
+
+                <div className="measureMeta">
+                  <div className="measureMetaItem">
+                    <span>Measure</span>
+                    <strong>{selectedItem.measure ?? "?"}</strong>
+                  </div>
+                  <div className="measureMetaItem">
+                    <span>Hand</span>
+                    <strong>{selectedItem.hand}</strong>
                   </div>
                 </div>
 
-                <div className="fingerRow">
+                <div className="fingerRow keyboardRow">
                   {[1, 2, 3, 4, 5].map((finger) => (
                     <button
                       key={finger}
                       type="button"
-                      className={`fingerBtn ${selectedItem.fingering === finger ? "fingerBtn-active" : ""}`}
+                      className={`fingerKey ${selectedItem.fingering === finger ? "fingerKey-active" : ""}`}
                       onClick={() => onChooseFinger(finger)}
                     >
                       {finger}
@@ -537,32 +656,49 @@ export default function App() {
                 </div>
 
                 <div className="editorActions">
-                  <button className="ghostBtn" type="button" onClick={() => toggleLock(selectedItem)}>
-                    {selectedItem.locked ? "Unlock note" : "Lock note"}
+                  <button className="softBtn" type="button" onClick={resetSelectedNote}>
+                    Reset
                   </button>
-                  <button className="ghostBtn" type="button" onClick={resetSelectedNote}>
-                    Reset local edit
+                  <button className="softBtn" type="button" onClick={() => toggleLock(selectedItem)}>
+                    {selectedItem.locked ? "Unlock note" : "Lock note"}
                   </button>
                 </div>
 
-                <div className="editorFootnote">
+                <div className="baselineNote">
                   Current finger <strong>{selectedItem.fingering}</strong>
-                  {selectedServerFinger != null ? (
-                    <span className="muted"> | generated baseline {selectedServerFinger}</span>
-                  ) : null}
+                  {selectedServerFinger != null ? <span> | generated baseline {selectedServerFinger}</span> : null}
                 </div>
               </div>
             )}
-          </section>
+          </div>
 
-          <section className="panel growPanel">
-            <div className="panelHeader">
-              <div className="panelTitle">Editable noteheads</div>
-              <div className="panelMeta">{editorItems.length}</div>
+          <div className="railPanel">
+            <div className="railLabel">Edit History</div>
+            {selectedHistory.length === 0 ? (
+              <div className="emptyPanel">Your manual edits and locks will appear here.</div>
+            ) : (
+              <div className="historyList">
+                {selectedHistory.map((item) => (
+                  <div key={item.key} className={`historyRow historyRow-${item.tone}`}>
+                    <div className="historyGlyph">{item.tone === "lock" ? "L" : "F"}</div>
+                    <div>
+                      <div className="historyTitle">{item.label}</div>
+                      <div className="historyMeta">{item.meta}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="railPanel growPanel">
+            <div className="railHeader">
+              <div className="railLabel">Editable Noteheads</div>
+              <div className="railCount">{editorItems.length}</div>
             </div>
 
             {editorItems.length === 0 ? (
-              <div className="panelEmpty">No fingerings loaded yet.</div>
+              <div className="emptyPanel">No generated noteheads yet.</div>
             ) : (
               <div className="noteList">
                 {editorItems.map((item) => {
@@ -579,7 +715,7 @@ export default function App() {
                         <span className="noteRowMeta">finger {item.fingering}</span>
                       </div>
                       <div className="noteBadges">
-                        <span className={`badge badge-hand badge-${item.hand.toLowerCase()}`}>{item.hand}</span>
+                        <span className={`badge badge-${item.hand.toLowerCase()}`}>{item.hand}</span>
                         {item.locked ? <span className="badge badge-lock">locked</span> : null}
                       </div>
                     </button>
@@ -587,13 +723,20 @@ export default function App() {
                 })}
               </div>
             )}
-          </section>
+          </div>
 
           {warnings.length > 0 ? (
-            <section className="panel">
-              <div className="panelTitle">Warnings</div>
+            <div className="railPanel">
+              <div className="railLabel">Warnings</div>
               <pre className="warnings">{warnings.join("\n")}</pre>
-            </section>
+            </div>
+          ) : null}
+
+          {resultKey ? (
+            <div className="railPanel">
+              <div className="railLabel">Result Key</div>
+              <code className="resultKeyBlock">{resultKey}</code>
+            </div>
           ) : null}
         </aside>
       </div>
