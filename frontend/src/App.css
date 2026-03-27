@@ -457,6 +457,7 @@ input[type="range"] {
   display: flex;
   flex-direction: column;
   gap: 18px;
+  overflow: hidden;
 }
 
 .scoreViewportInner {
@@ -781,6 +782,7 @@ input[type="range"] {
 }
 
 .keyboardDock {
+  flex-shrink: 0;
   padding: 16px;
   border-radius: 20px;
   border: 1px solid rgba(67, 70, 86, 0.08);

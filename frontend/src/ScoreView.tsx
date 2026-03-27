@@ -96,6 +96,8 @@ export function ScoreView({
         drawTitle: false,
         backend: "svg",
         drawingParameters: "compact",
+        pageFormat: "Letter_P",
+        newPageFromXML: false,
       });
 
       osmdRef.current = osmd;
@@ -548,23 +550,79 @@ function createNoteBucketKey(measure: number, staffNumber: number | null, pitchM
 }
 
 function getPageOrigin(positionAndShape: unknown) {
+  const absolute = (positionAndShape as { AbsolutePosition?: { x?: number; y?: number } } | null)?.AbsolutePosition;
+  if (absolute?.x != null || absolute?.y != null) {
+    return {
+      x: absolute?.x ?? 0,
+      y: absolute?.y ?? 0,
+    };
+  }
+
   const rect = getBoundingRect(positionAndShape);
   if (rect) {
     return { x: rect.x, y: rect.y };
   }
 
-  const absolute = (positionAndShape as { AbsolutePosition?: { x?: number; y?: number } } | null)?.AbsolutePosition;
-  return {
-    x: absolute?.x ?? 0,
-    y: absolute?.y ?? 0,
-  };
+  return { x: 0, y: 0 };
 }
 
 function getBoundingRect(positionAndShape: unknown) {
   const shape = positionAndShape as {
+    AbsolutePosition?: { x?: number; y?: number };
+    UpperLeftCorner?: { x?: number; y?: number };
+    Size?: { width?: number; height?: number };
+    BorderLeft?: number;
+    BorderRight?: number;
+    BorderTop?: number;
+    BorderBottom?: number;
+    BorderMarginLeft?: number;
+    BorderMarginRight?: number;
+    BorderMarginTop?: number;
+    BorderMarginBottom?: number;
     BoundingMarginRectangle?: { x: number; y: number; width: number; height: number };
     BoundingRectangle?: { x: number; y: number; width: number; height: number };
   } | null;
+  const absolute = shape?.AbsolutePosition;
+  const useMarginBorders = [
+    shape?.BorderMarginLeft,
+    shape?.BorderMarginRight,
+    shape?.BorderMarginTop,
+    shape?.BorderMarginBottom,
+  ].every((value) => typeof value === "number");
+  const useBorders = [
+    shape?.BorderLeft,
+    shape?.BorderRight,
+    shape?.BorderTop,
+    shape?.BorderBottom,
+  ].every((value) => typeof value === "number");
+
+  if (absolute && useMarginBorders) {
+    return {
+      x: (absolute.x ?? 0) + (shape?.BorderMarginLeft ?? 0),
+      y: (absolute.y ?? 0) + (shape?.BorderMarginTop ?? 0),
+      width: (shape?.BorderMarginRight ?? 0) - (shape?.BorderMarginLeft ?? 0),
+      height: (shape?.BorderMarginBottom ?? 0) - (shape?.BorderMarginTop ?? 0),
+    };
+  }
+
+  if (absolute && useBorders) {
+    return {
+      x: (absolute.x ?? 0) + (shape?.BorderLeft ?? 0),
+      y: (absolute.y ?? 0) + (shape?.BorderTop ?? 0),
+      width: (shape?.BorderRight ?? 0) - (shape?.BorderLeft ?? 0),
+      height: (shape?.BorderBottom ?? 0) - (shape?.BorderTop ?? 0),
+    };
+  }
+
+  if (shape?.UpperLeftCorner && shape?.Size) {
+    return {
+      x: shape.UpperLeftCorner.x ?? 0,
+      y: shape.UpperLeftCorner.y ?? 0,
+      width: shape.Size.width ?? 0,
+      height: shape.Size.height ?? 0,
+    };
+  }
+
   const rect = shape?.BoundingMarginRectangle ?? shape?.BoundingRectangle;
   if (!rect) {
     return null;

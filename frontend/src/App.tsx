@@ -790,40 +790,6 @@ export default function App() {
             )}
           </div>
 
-          <div className="railPanel growPanel">
-            <div className="railHeader">
-              <div className="railLabel">Editable Noteheads</div>
-              <div className="railCount">{editorItems.length}</div>
-            </div>
-
-            {editorItems.length === 0 ? (
-              <div className="emptyPanel">No generated noteheads yet.</div>
-            ) : (
-              <div className="noteList">
-                {editorItems.map((item) => {
-                  const isSelected = selectedItem?.noteId === item.noteId;
-                  return (
-                    <button
-                      key={item.noteId}
-                      type="button"
-                      className={`noteRow ${isSelected ? "noteRow-selected" : ""}`}
-                      onClick={() => setSelectedNoteId(item.noteId)}
-                    >
-                      <div className="noteRowMain">
-                        <span className="noteRowTitle">{item.label}</span>
-                        <span className="noteRowMeta">finger {item.fingering}</span>
-                      </div>
-                      <div className="noteBadges">
-                        <span className={`badge badge-${item.hand.toLowerCase()}`}>{item.hand}</span>
-                        {item.locked ? <span className="badge badge-lock">locked</span> : null}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
           {warnings.length > 0 ? (
             <div className="railPanel">
               <div className="railLabel">Warnings</div>
