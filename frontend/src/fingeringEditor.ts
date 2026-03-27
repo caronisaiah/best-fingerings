@@ -14,6 +14,15 @@ export type NoteEditorItem = {
   label: string;
 };
 
+export type KeyboardPreviewNote = {
+  noteId: string;
+  hand: HandName;
+  pitchMidi: number;
+  finger: number | null;
+  selected: boolean;
+  locked: boolean;
+};
+
 type NoteLocation = {
   hand: HandName;
   eventIndex: number;
@@ -114,6 +123,47 @@ export function findNoteLocation(payload: ResultPayload | null, noteId: string):
   }
 
   return null;
+}
+
+export function getKeyboardPreviewNotes(
+  payload: ResultPayload | null,
+  noteId: string | null,
+  lockedFingerings: Record<string, number>,
+): KeyboardPreviewNote[] {
+  if (!noteId) {
+    return [];
+  }
+
+  const location = findNoteLocation(payload, noteId);
+  if (!location) {
+    return [];
+  }
+
+  if (location.event.type === "note") {
+    return [
+      {
+        noteId,
+        hand: location.hand,
+        pitchMidi: location.event.pitch_midi,
+        finger: location.event.fingering,
+        selected: true,
+        locked: lockedFingerings[noteId] !== undefined,
+      },
+    ];
+  }
+
+  const chordEvent = location.event;
+  return chordEvent.pitches_midi.map((pitchMidi, idx) => {
+    const chordNoteId = chordEvent.note_ids?.[idx] ?? `${noteId}-${idx}`;
+    return {
+      noteId: chordNoteId,
+      hand: location.hand,
+      pitchMidi,
+      finger: chordEvent.fingerings[idx] ?? null,
+      selected: idx === location.noteIndex,
+      locked: chordNoteId ? lockedFingerings[chordNoteId] !== undefined : false,
+    };
+  });
 }
 
 export function getDisplayedFinger(payload: ResultPayload | null, noteId: string): number | null {

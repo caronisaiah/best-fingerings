@@ -5,12 +5,14 @@ import { getJob, getResult, getResultByKey, postFingerings } from "./api";
 import {
   applyManualEdits,
   flattenFingeringItems,
+  getKeyboardPreviewNotes,
   getDisplayedFinger,
   type NoteEditorItem,
   validateFingerEdit,
 } from "./fingeringEditor";
 import { fileToMusicXMLText, injectFingerings } from "./musicxml";
 import { ScoreView } from "./ScoreView";
+import { PianoKeyboard } from "./components/PianoKeyboard";
 import type { ResultPayload } from "./types";
 
 type Status = "idle" | "uploading" | "queued" | "running" | "done" | "error";
@@ -39,6 +41,12 @@ function toErrorMessage(error: unknown) {
     return error.message;
   }
   return String(error);
+}
+
+function midiToNoteName(midi: number) {
+  const names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+  const octave = Math.floor(midi / 12) - 1;
+  return `${names[midi % 12]} ${octave}`;
 }
 
 function humanStatus(status: Status) {
@@ -107,6 +115,10 @@ export default function App() {
   const selectedServerFinger = useMemo(
     () => (selectedItem ? getDisplayedFinger(serverPayload, selectedItem.noteId) : null),
     [serverPayload, selectedItem],
+  );
+  const keyboardPreviewNotes = useMemo(
+    () => getKeyboardPreviewNotes(displayPayload, selectedNoteId, lockedNoteFingerings),
+    [displayPayload, lockedNoteFingerings, selectedNoteId],
   );
 
   const warnings = useMemo(() => {
@@ -619,11 +631,12 @@ export default function App() {
               <div className="inspectorCard">
                 <div className="inspectorHeader">
                   <div>
-                    <div className="inspectorPitch">{selectedItem.pitchMidi}</div>
+                    <div className="inspectorPitch">{midiToNoteName(selectedItem.pitchMidi)}</div>
                     <div className="inspectorSub">
                       {selectedItem.kind === "chord-note"
                         ? `Chord tone ${Number(selectedItem.chordIndex) + 1} of ${selectedItem.chordSize}`
                         : "Single note"}
+                      {` | MIDI ${selectedItem.pitchMidi}`}
                     </div>
                   </div>
                   <button className="lockIconBtn" type="button" onClick={() => toggleLock(selectedItem)}>
@@ -667,6 +680,19 @@ export default function App() {
                 <div className="baselineNote">
                   Current finger <strong>{selectedItem.fingering}</strong>
                   {selectedServerFinger != null ? <span> | generated baseline {selectedServerFinger}</span> : null}
+                </div>
+
+                <div className="keyboardInspector">
+                  <div className="keyboardInspectorHeader">
+                    <div className="keyboardInspectorTitle">Keyboard Preview</div>
+                    <div className="keyboardInspectorMeta">
+                      {keyboardPreviewNotes.length > 1
+                        ? `${keyboardPreviewNotes.length} notes in current event`
+                        : "Selected note on the keyboard"}
+                    </div>
+                  </div>
+
+                  <PianoKeyboard activeNotes={keyboardPreviewNotes} selectedPitchMidi={selectedItem.pitchMidi} />
                 </div>
               </div>
             )}
