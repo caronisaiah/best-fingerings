@@ -1,22 +1,25 @@
-import { startTransition, useDeferredValue, useEffect, useMemo, useState } from "react";
+import { Suspense, lazy, startTransition, useDeferredValue, useEffect, useMemo, useState } from "react";
 import "./App.css";
 
 import { getJob, getResult, getResultByKey, postFingerings } from "./api";
 import {
   applyManualEdits,
   flattenFingeringItems,
-  getKeyboardPreviewNotes,
+  getKeyboardPreviewNotesForMeasure,
   getDisplayedFinger,
   type NoteEditorItem,
   validateFingerEdit,
 } from "./fingeringEditor";
 import { fileToMusicXMLText, injectFingerings } from "./musicxml";
-import { ScoreView } from "./ScoreView";
 import { PianoKeyboard } from "./components/PianoKeyboard";
 import type { ResultPayload } from "./types";
 
+const LazyScoreView = lazy(async () => {
+  const module = await import("./ScoreView");
+  return { default: module.ScoreView };
+});
+
 type Status = "idle" | "uploading" | "queued" | "running" | "done" | "error";
-type ViewMode = "page" | "scroll";
 
 function downloadText(filename: string, text: string, mime: string) {
   const blob = new Blob([text], { type: mime });
@@ -86,8 +89,9 @@ export default function App() {
   const [manualEdits, setManualEdits] = useState<Record<string, number>>({});
   const [lockedNoteFingerings, setLockedNoteFingerings] = useState<Record<string, number>>({});
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
+  const [selectedMeasure, setSelectedMeasure] = useState<number | null>(null);
+  const [hoveredMeasure, setHoveredMeasure] = useState<number | null>(null);
 
-  const [viewMode, setViewMode] = useState<ViewMode>("page");
   const [zoom, setZoom] = useState(1.0);
   const [pageIndex, setPageIndex] = useState(0);
   const [pageCount, setPageCount] = useState(1);
@@ -116,9 +120,14 @@ export default function App() {
     () => (selectedItem ? getDisplayedFinger(serverPayload, selectedItem.noteId) : null),
     [serverPayload, selectedItem],
   );
-  const keyboardPreviewNotes = useMemo(
-    () => getKeyboardPreviewNotes(displayPayload, selectedNoteId, lockedNoteFingerings),
-    [displayPayload, lockedNoteFingerings, selectedNoteId],
+  const availableMeasures = useMemo(
+    () => Array.from(new Set(editorItems.map((item) => item.measure).filter((measure): measure is number => typeof measure === "number")))
+      .sort((a, b) => a - b),
+    [editorItems],
+  );
+  const measureKeyboardPreviewNotes = useMemo(
+    () => getKeyboardPreviewNotesForMeasure(displayPayload, selectedMeasure, lockedNoteFingerings, selectedNoteId),
+    [displayPayload, lockedNoteFingerings, selectedMeasure, selectedNoteId],
   );
 
   const warnings = useMemo(() => {
@@ -176,6 +185,25 @@ export default function App() {
       setSelectedNoteId(selectedItem.noteId);
     }
   }, [selectedItem, selectedNoteId]);
+
+  useEffect(() => {
+    if (availableMeasures.length === 0) {
+      setSelectedMeasure(null);
+      setHoveredMeasure(null);
+      return;
+    }
+
+    setSelectedMeasure((current) => {
+      if (current != null && availableMeasures.includes(current)) {
+        return current;
+      }
+      return selectedItem?.measure ?? availableMeasures[0];
+    });
+
+    setHoveredMeasure((current) => (
+      current != null && availableMeasures.includes(current) ? current : null
+    ));
+  }, [availableMeasures, selectedItem]);
 
   useEffect(() => {
     let cancelled = false;
@@ -296,6 +324,8 @@ export default function App() {
     setManualEdits({});
     setLockedNoteFingerings({});
     setSelectedNoteId(null);
+    setSelectedMeasure(null);
+    setHoveredMeasure(null);
     setErr(null);
   }
 
@@ -362,11 +392,32 @@ export default function App() {
     setErr(null);
   }
 
+  function onSelectMeasure(measure: number) {
+    setSelectedMeasure(measure);
+    setHoveredMeasure(measure);
+
+    const itemInMeasure = editorItems.find((item) => item.measure === measure);
+    if (itemInMeasure) {
+      setSelectedNoteId(itemInMeasure.noteId);
+    }
+  }
+
+  function onSelectScoreNote(noteId: string) {
+    setSelectedNoteId(noteId);
+    const item = editorItems.find((entry) => entry.noteId === noteId);
+    if (item?.measure != null) {
+      setSelectedMeasure(item.measure);
+      setHoveredMeasure(item.measure);
+    }
+  }
+
   const canRun = status !== "uploading" && status !== "queued" && status !== "running";
   const lockCount = Object.keys(lockedNoteFingerings).length;
   const localEditCount = Object.keys(manualEdits).length;
   const scoreName = file ? file.name.replace(/\.(xml|musicxml|mxl)$/i, "") : "No score loaded";
   const composerLabel = file ? "Imported MusicXML score" : "Upload MusicXML or MXL to begin";
+  const selectedMeasureNoteCount = measureKeyboardPreviewNotes.length;
+  const selectedMeasureLabel = selectedMeasure != null ? `Measure ${selectedMeasure}` : "Choose a measure";
 
   return (
     <div className="appShell">
@@ -513,48 +564,9 @@ export default function App() {
           {err ? <div className="errorBox">{err}</div> : null}
 
           <section className="scoreViewport">
-            <div className="scoreViewportInner">
-              {!deferredAnnotatedXml ? (
-                <div className="emptyState">
-                  <div className="emptyInner">
-                    <div className="emptyEyebrow">Ready for import</div>
-                    <h2>Bring in a score and build from there</h2>
-                    <p>
-                      The live notation view will appear here once a MusicXML or MXL score has been loaded and fingerings
-                      have been generated.
-                    </p>
-                  </div>
-                </div>
-              ) : (
-                <ScoreView
-                  xmlText={deferredAnnotatedXml}
-                  viewMode={viewMode}
-                  pageIndex={pageIndex}
-                  zoom={zoom}
-                  onPageCountChange={(count) => {
-                    setPageCount(count || 1);
-                    setPageIndex((current) => Math.min(current, Math.max(0, (count || 1) - 1)));
-                  }}
-                />
-              )}
-            </div>
-
-            <div className="floatingToolbar">
+            <div className="scoreToolbar">
               <div className="toolbarSection">
-                <button
-                  type="button"
-                  className={`toolbarModeBtn ${viewMode === "page" ? "toolbarModeBtn-active" : ""}`}
-                  onClick={() => setViewMode("page")}
-                >
-                  Page
-                </button>
-                <button
-                  type="button"
-                  className={`toolbarModeBtn ${viewMode === "scroll" ? "toolbarModeBtn-active" : ""}`}
-                  onClick={() => setViewMode("scroll")}
-                >
-                  Scroll
-                </button>
+                <span className="toolbarModePill">Page view</span>
               </div>
 
               <div className="toolbarDivider" />
@@ -575,32 +587,29 @@ export default function App() {
 
               <div className="toolbarDivider" />
 
-              {viewMode === "page" ? (
-                <>
-                  <div className="toolbarSection">
-                    <button
-                      type="button"
-                      className="toolbarGhostBtn"
-                      onClick={() => setPageIndex((p) => Math.max(0, p - 1))}
-                      disabled={pageIndex <= 0}
-                    >
-                      Prev
-                    </button>
-                    <span className="toolbarValue">
-                      {pageIndex + 1}/{pageCount}
-                    </span>
-                    <button
-                      type="button"
-                      className="toolbarGhostBtn"
-                      onClick={() => setPageIndex((p) => Math.min(pageCount - 1, p + 1))}
-                      disabled={pageIndex >= pageCount - 1}
-                    >
-                      Next
-                    </button>
-                  </div>
-                  <div className="toolbarDivider" />
-                </>
-              ) : null}
+              <div className="toolbarSection">
+                <button
+                  type="button"
+                  className="toolbarGhostBtn"
+                  onClick={() => setPageIndex((p) => Math.max(0, p - 1))}
+                  disabled={pageIndex <= 0}
+                >
+                  Prev
+                </button>
+                <span className="toolbarValue">
+                  {pageIndex + 1}/{pageCount}
+                </span>
+                <button
+                  type="button"
+                  className="toolbarGhostBtn"
+                  onClick={() => setPageIndex((p) => Math.min(pageCount - 1, p + 1))}
+                  disabled={pageIndex >= pageCount - 1}
+                >
+                  Next
+                </button>
+              </div>
+
+              <div className="toolbarDivider" />
 
               <div className="toolbarSection">
                 {annotatedXml ? (
@@ -617,6 +626,82 @@ export default function App() {
                     JSON
                   </a>
                 ) : null}
+              </div>
+            </div>
+
+            <div className="scoreWorkspace">
+              <div className="scoreViewportInner">
+                {!deferredAnnotatedXml ? (
+                  <div className="emptyState">
+                    <div className="emptyInner">
+                      <div className="emptyEyebrow">Ready for import</div>
+                      <h2>Bring in a score and build from there</h2>
+                      <p>
+                        The live notation view will appear here once a MusicXML or MXL score has been loaded and fingerings
+                        have been generated.
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <Suspense
+                    fallback={(
+                      <div className="scoreLoadingState">
+                        <div className="scoreLoadingCard">
+                          <div className="emptyEyebrow">Loading workspace</div>
+                          <h2>Preparing the score canvas</h2>
+                          <p>The notation engine is loading so page rendering and note selection stay fast once it appears.</p>
+                        </div>
+                      </div>
+                    )}
+                  >
+                    <LazyScoreView
+                      xmlText={deferredAnnotatedXml}
+                      viewMode="page"
+                      pageIndex={pageIndex}
+                      zoom={zoom}
+                      selectableNotes={editorItems}
+                      selectedNoteId={selectedNoteId}
+                      onNoteSelect={onSelectScoreNote}
+                      selectedMeasure={selectedMeasure}
+                      hoveredMeasure={hoveredMeasure}
+                      onMeasureHoverChange={setHoveredMeasure}
+                      onMeasureSelect={onSelectMeasure}
+                      onPageCountChange={(count) => {
+                        setPageCount(count || 1);
+                        setPageIndex((current) => Math.min(current, Math.max(0, (count || 1) - 1)));
+                      }}
+                    />
+                  </Suspense>
+                )}
+              </div>
+
+              <div className="keyboardDock">
+                <div className="keyboardDockHeader">
+                  <div>
+                    <div className="keyboardDockTitle">Measure Keyboard Preview</div>
+                    <div className="keyboardDockMeta">
+                      {selectedMeasure != null
+                        ? `${selectedMeasureLabel} • ${selectedMeasureNoteCount} noteheads mapped below`
+                        : "Hover a measure to see its target area, then click to pin its fingerings on the keyboard."}
+                    </div>
+                  </div>
+                  {hoveredMeasure != null && hoveredMeasure !== selectedMeasure ? (
+                    <div className="keyboardDockHint">Hovering m.{hoveredMeasure}</div>
+                  ) : (
+                    <div className="keyboardDockHint">Score stays above the keyboard in page mode</div>
+                  )}
+                </div>
+
+                {measureKeyboardPreviewNotes.length > 0 ? (
+                  <PianoKeyboard
+                    activeNotes={measureKeyboardPreviewNotes}
+                    selectedPitchMidi={selectedItem?.measure === selectedMeasure ? selectedItem.pitchMidi : null}
+                  />
+                ) : (
+                  <div className="keyboardDockEmpty">
+                    Click a visible measure on the page to project that measure's generated fingerings onto the keyboard.
+                  </div>
+                )}
               </div>
             </div>
           </section>
@@ -682,18 +767,6 @@ export default function App() {
                   {selectedServerFinger != null ? <span> | generated baseline {selectedServerFinger}</span> : null}
                 </div>
 
-                <div className="keyboardInspector">
-                  <div className="keyboardInspectorHeader">
-                    <div className="keyboardInspectorTitle">Keyboard Preview</div>
-                    <div className="keyboardInspectorMeta">
-                      {keyboardPreviewNotes.length > 1
-                        ? `${keyboardPreviewNotes.length} notes in current event`
-                        : "Selected note on the keyboard"}
-                    </div>
-                  </div>
-
-                  <PianoKeyboard activeNotes={keyboardPreviewNotes} selectedPitchMidi={selectedItem.pitchMidi} />
-                </div>
               </div>
             )}
           </div>

@@ -5,6 +5,7 @@ export type NoteEditorItem = {
   hand: HandName;
   eventId: number;
   measure: number | null;
+  staffNumber: number | null;
   pitchMidi: number;
   fingering: number;
   locked: boolean;
@@ -60,6 +61,7 @@ export function flattenFingeringItems(payload: ResultPayload | null, lockedFinge
           hand,
           eventId: evt.event_id,
           measure: evt.measure ?? null,
+          staffNumber: evt.xml_anchor?.staff ?? null,
           pitchMidi: evt.pitch_midi,
           fingering: evt.fingering,
           locked: lockedFingerings[evt.note_id] !== undefined,
@@ -81,6 +83,7 @@ export function flattenFingeringItems(payload: ResultPayload | null, lockedFinge
             hand,
             eventId: evt.event_id,
             measure: evt.measure ?? null,
+            staffNumber: evt.xml_note_anchors?.[idx]?.staff ?? evt.xml_anchor?.staff ?? null,
             pitchMidi: Array.isArray(evt.pitches_midi) ? evt.pitches_midi[idx] : -1,
             fingering: Array.isArray(evt.fingerings) ? evt.fingerings[idx] : 1,
             locked: lockedFingerings[noteId] !== undefined,
@@ -164,6 +167,61 @@ export function getKeyboardPreviewNotes(
       locked: chordNoteId ? lockedFingerings[chordNoteId] !== undefined : false,
     };
   });
+}
+
+export function getKeyboardPreviewNotesForMeasure(
+  payload: ResultPayload | null,
+  measure: number | null,
+  lockedFingerings: Record<string, number>,
+  selectedNoteId: string | null = null,
+): KeyboardPreviewNote[] {
+  if (measure == null) {
+    return [];
+  }
+
+  const out: KeyboardPreviewNote[] = [];
+  const hands = payload?.fingerings?.hands ?? {};
+
+  for (const hand of ["RH", "LH"] as HandName[]) {
+    const events = hands[hand] ?? [];
+
+    for (const evt of events) {
+      if (!evt || evt.measure !== measure) {
+        continue;
+      }
+
+      if (evt.type === "note" && evt.note_id) {
+        out.push({
+          noteId: evt.note_id,
+          hand,
+          pitchMidi: evt.pitch_midi,
+          finger: evt.fingering,
+          selected: evt.note_id === selectedNoteId,
+          locked: lockedFingerings[evt.note_id] !== undefined,
+        });
+        continue;
+      }
+
+      if (evt.type === "chord" && Array.isArray(evt.note_ids) && Array.isArray(evt.pitches_midi)) {
+        evt.note_ids.forEach((noteId: string | null, idx: number) => {
+          if (!noteId) {
+            return;
+          }
+
+          out.push({
+            noteId,
+            hand,
+            pitchMidi: evt.pitches_midi[idx],
+            finger: evt.fingerings[idx] ?? null,
+            selected: noteId === selectedNoteId,
+            locked: lockedFingerings[noteId] !== undefined,
+          });
+        });
+      }
+    }
+  }
+
+  return out.sort((a, b) => a.pitchMidi - b.pitchMidi || a.hand.localeCompare(b.hand));
 }
 
 export function getDisplayedFinger(payload: ResultPayload | null, noteId: string): number | null {

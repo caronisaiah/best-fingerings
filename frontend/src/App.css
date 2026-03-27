@@ -434,17 +434,37 @@ input[type="range"] {
 .scoreViewport {
   flex: 1;
   min-height: 0;
-  position: relative;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 18px;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(242, 246, 251, 0.92)),
     linear-gradient(90deg, rgba(29, 86, 216, 0.03), transparent 16%, transparent 84%, rgba(29, 86, 216, 0.03));
 }
 
-.scoreViewportInner {
-  height: 100%;
+.scoreToolbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 10px 0;
+}
+
+.scoreWorkspace {
+  flex: 1;
   min-height: 0;
-  padding: 30px 26px 110px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.scoreViewportInner {
+  flex: 1;
+  min-height: 0;
+  padding: 12px 12px 0;
+  overflow: hidden;
+  position: relative;
 }
 
 .scoreViewportInner::before {
@@ -461,7 +481,8 @@ input[type="range"] {
 
 .osmdHost {
   width: 100%;
-  min-height: 72vh;
+  height: 100%;
+  min-height: 0;
 }
 
 .osmdHost svg {
@@ -471,10 +492,40 @@ input[type="range"] {
 }
 
 .emptyState {
-  min-height: 68vh;
+  min-height: 100%;
   display: grid;
   place-items: center;
   text-align: center;
+}
+
+.scoreLoadingState {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+}
+
+.scoreLoadingCard {
+  max-width: 420px;
+  padding: 30px 32px;
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.86);
+  border: 1px solid rgba(67, 70, 86, 0.08);
+  box-shadow: var(--shadow-soft);
+  text-align: center;
+}
+
+.scoreLoadingCard h2 {
+  margin: 10px 0 12px;
+  font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
+  font-size: 30px;
+  line-height: 1.06;
+  letter-spacing: -0.04em;
+}
+
+.scoreLoadingCard p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.6;
 }
 
 .emptyInner {
@@ -498,23 +549,6 @@ input[type="range"] {
   margin: 0;
   color: var(--muted);
   line-height: 1.6;
-}
-
-.floatingToolbar {
-  position: absolute;
-  left: 50%;
-  bottom: 24px;
-  transform: translateX(-50%);
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 14px 18px;
-  border-radius: 22px;
-  background: rgba(255, 255, 255, 0.86);
-  border: 1px solid rgba(67, 70, 86, 0.10);
-  box-shadow: 0 20px 44px rgba(23, 28, 32, 0.12);
-  backdrop-filter: blur(18px);
-  z-index: 10;
 }
 
 .toolbarSection {
@@ -565,6 +599,20 @@ input[type="range"] {
 .toolbarModeBtn-active {
   background: var(--primary-soft);
   color: var(--primary);
+}
+
+.toolbarModePill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: rgba(29, 86, 216, 0.10);
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .zoomRange {
@@ -732,6 +780,49 @@ input[type="range"] {
   text-align: right;
 }
 
+.keyboardDock {
+  padding: 16px;
+  border-radius: 20px;
+  border: 1px solid rgba(67, 70, 86, 0.08);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(239, 244, 250, 0.96));
+  box-shadow: var(--shadow-soft);
+}
+
+.keyboardDockHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.keyboardDockTitle {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.keyboardDockMeta,
+.keyboardDockHint,
+.keyboardDockEmpty {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.keyboardDockHint {
+  max-width: 240px;
+  text-align: right;
+}
+
+.keyboardDockEmpty {
+  padding: 18px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.74);
+  border: 1px solid rgba(67, 70, 86, 0.08);
+}
+
 .pianoKeyboardShell {
   padding: 12px;
   border-radius: 16px;
@@ -854,6 +945,108 @@ input[type="range"] {
 .pianoKeyLock {
   color: var(--warning);
   font-size: 10px;
+}
+
+.osmdHostWrap {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.measureOverlayLayer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.measureOverlay {
+  position: absolute;
+  pointer-events: auto;
+  border: 1px solid rgba(29, 86, 216, 0.10);
+  border-radius: 16px;
+  background: rgba(29, 86, 216, 0.02);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.24);
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    box-shadow 140ms ease,
+    transform 140ms ease;
+}
+
+.measureOverlay:hover,
+.measureOverlay-hovered {
+  background: rgba(29, 86, 216, 0.08);
+  border-color: rgba(29, 86, 216, 0.24);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.28),
+    0 0 0 1px rgba(29, 86, 216, 0.06);
+}
+
+.measureOverlay-selected {
+  background: rgba(29, 86, 216, 0.12);
+  border-color: rgba(29, 86, 216, 0.34);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.34),
+    0 0 0 2px rgba(29, 86, 216, 0.12);
+}
+
+.measureOverlayLabel {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.94);
+  color: var(--primary);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0;
+  transform: translateY(-2px);
+  transition:
+    opacity 140ms ease,
+    transform 140ms ease;
+}
+
+.measureOverlay:hover .measureOverlayLabel,
+.measureOverlay-hovered .measureOverlayLabel,
+.measureOverlay-selected .measureOverlayLabel {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.noteOverlayLayer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.noteOverlay {
+  position: absolute;
+  pointer-events: auto;
+  border: 0;
+  background: transparent;
+  border-radius: 999px;
+  cursor: pointer;
+  box-shadow: inset 0 0 0 1px rgba(29, 86, 216, 0);
+  transition:
+    box-shadow 120ms ease,
+    background-color 120ms ease,
+    transform 120ms ease;
+}
+
+.noteOverlay:hover {
+  background: rgba(29, 86, 216, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(29, 86, 216, 0.18);
+}
+
+.noteOverlay-selected {
+  background: rgba(29, 86, 216, 0.16);
+  box-shadow:
+    inset 0 0 0 2px rgba(29, 86, 216, 0.34),
+    0 0 0 3px rgba(29, 86, 216, 0.12);
 }
 
 .historyList {
@@ -1047,13 +1240,9 @@ input[type="range"] {
     width: 100%;
   }
 
-  .floatingToolbar {
-    left: 16px;
-    right: 16px;
-    transform: none;
-    width: auto;
+  .scoreToolbar,
+  .keyboardDockHeader {
     flex-wrap: wrap;
-    justify-content: space-between;
   }
 }
 
@@ -1075,14 +1264,8 @@ input[type="range"] {
     grid-template-columns: 1fr;
   }
 
-  .floatingToolbar {
-    position: static;
-    margin: 0 14px 14px;
-    transform: none;
-  }
-
   .scoreViewportInner {
-    padding: 18px 14px 24px;
+    padding: 12px 6px 0;
   }
 
   .toolbarDivider {
