@@ -991,6 +991,22 @@ input[type="range"] {
   box-shadow: 0 6px 12px rgba(23, 28, 32, 0.10);
 }
 
+.pianoKeyLabel-rh {
+  background: linear-gradient(180deg, #edf3ff 0%, #d7e5ff 100%);
+  color: #184cc9;
+  box-shadow:
+    0 6px 12px rgba(23, 28, 32, 0.10),
+    inset 0 0 0 1px rgba(29, 86, 216, 0.14);
+}
+
+.pianoKeyLabel-lh {
+  background: linear-gradient(180deg, #e9faf3 0%, #cef2e0 100%);
+  color: #0d8b5f;
+  box-shadow:
+    0 6px 12px rgba(23, 28, 32, 0.10),
+    inset 0 0 0 1px rgba(13, 139, 95, 0.16);
+}
+
 .pianoKeyLabel-black {
   bottom: 10px;
 }

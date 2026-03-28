@@ -67,7 +67,15 @@ export function PianoKeyboard({ activeNotes, selectedPitchMidi }: PianoKeyboardP
   const activeByMidi = useMemo(() => {
     const map = new Map<number, PianoKeyboardActiveNote>();
     activeNotes.forEach((note) => {
-      map.set(note.pitchMidi, note);
+      const existing = map.get(note.pitchMidi);
+      if (!existing) {
+        map.set(note.pitchMidi, note);
+        return;
+      }
+
+      if (note.selected || (!existing.selected && note.locked && !existing.locked)) {
+        map.set(note.pitchMidi, note);
+      }
     });
     return map;
   }, [activeNotes]);
@@ -75,22 +83,36 @@ export function PianoKeyboard({ activeNotes, selectedPitchMidi }: PianoKeyboardP
   useEffect(() => {
     const viewport = viewportRef.current;
     const keyboard = keyboardRef.current;
-    if (!viewport || !keyboard || selectedPitchMidi == null) {
+    if (!viewport || !keyboard || activeNotes.length === 0) {
       return;
     }
 
-    const target = keyboard.querySelector<HTMLElement>(`[data-midi="${selectedPitchMidi}"]`);
-    if (!target) {
+    const sortedMidis = Array.from(new Set(activeNotes.map((note) => note.pitchMidi))).sort((a, b) => a - b);
+    const leftTarget = keyboard.querySelector<HTMLElement>(`[data-midi="${sortedMidis[0]}"]`);
+    const rightTarget = keyboard.querySelector<HTMLElement>(`[data-midi="${sortedMidis[sortedMidis.length - 1]}"]`);
+    if (!leftTarget || !rightTarget) {
       return;
     }
 
-    const viewportCenter = viewport.clientWidth / 2;
-    const targetCenter = target.offsetLeft + target.clientWidth / 2;
+    const padding = 24;
+    const spanLeft = Math.max(0, leftTarget.offsetLeft - padding);
+    const spanRight = rightTarget.offsetLeft + rightTarget.clientWidth + padding;
+    const spanWidth = spanRight - spanLeft;
+    let nextLeft: number;
+
+    if (spanWidth <= viewport.clientWidth) {
+      nextLeft = Math.max(0, spanLeft - (viewport.clientWidth - spanWidth) / 2);
+    } else {
+      const spanCenter = (spanLeft + spanRight) / 2;
+      nextLeft = Math.max(0, spanCenter - viewport.clientWidth / 2);
+      nextLeft = Math.min(nextLeft, Math.max(0, spanRight - viewport.clientWidth));
+    }
+
     viewport.scrollTo({
-      left: Math.max(0, targetCenter - viewportCenter),
+      left: nextLeft,
       behavior: "smooth",
     });
-  }, [selectedPitchMidi]);
+  }, [activeNotes, selectedPitchMidi]);
 
   return (
     <div className="pianoKeyboardShell">
@@ -121,7 +143,7 @@ export function PianoKeyboard({ activeNotes, selectedPitchMidi }: PianoKeyboardP
                   style={{ left: key.left, width: WHITE_KEY_WIDTH }}
                 >
                   {active ? (
-                    <div className="pianoKeyLabel">
+                    <div className={`pianoKeyLabel pianoKeyLabel-${active.hand.toLowerCase()}`}>
                       <span>{active.finger ?? ""}</span>
                       {active.locked ? <span className="pianoKeyLock">L</span> : null}
                     </div>
@@ -149,7 +171,7 @@ export function PianoKeyboard({ activeNotes, selectedPitchMidi }: PianoKeyboardP
                   style={{ left: key.left }}
                 >
                   {active ? (
-                    <div className="pianoKeyLabel pianoKeyLabel-black">
+                    <div className={`pianoKeyLabel pianoKeyLabel-black pianoKeyLabel-${active.hand.toLowerCase()}`}>
                       <span>{active.finger ?? ""}</span>
                     </div>
                   ) : null}
