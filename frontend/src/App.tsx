@@ -5,14 +5,15 @@ import { getJob, getResult, getResultByKey, postFingerings } from "./api";
 import {
   applyManualEdits,
   flattenFingeringItems,
-  getKeyboardPreviewNotesForMeasure,
+  getKeyboardPreviewGroupForTarget,
+  getKeyboardPreviewGroups,
   getDisplayedFinger,
   type NoteEditorItem,
   validateFingerEdit,
 } from "./fingeringEditor";
 import { fileToMusicXMLText, injectFingerings } from "./musicxml";
 import { PianoKeyboard } from "./components/PianoKeyboard";
-import type { ResultPayload } from "./types";
+import type { ResultPayload, ScorePassageTarget } from "./types";
 
 const LazyScoreView = lazy(async () => {
   const module = await import("./ScoreView");
@@ -89,8 +90,9 @@ export default function App() {
   const [manualEdits, setManualEdits] = useState<Record<string, number>>({});
   const [lockedNoteFingerings, setLockedNoteFingerings] = useState<Record<string, number>>({});
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
-  const [selectedMeasure, setSelectedMeasure] = useState<number | null>(null);
-  const [hoveredMeasure, setHoveredMeasure] = useState<number | null>(null);
+  const [selectedPreviewKey, setSelectedPreviewKey] = useState<string | null>(null);
+  const [hoveredTarget, setHoveredTarget] = useState<ScorePassageTarget | null>(null);
+  const [keyboardTrayOpen, setKeyboardTrayOpen] = useState(false);
 
   const [zoom, setZoom] = useState(1.0);
   const [pageIndex, setPageIndex] = useState(0);
@@ -120,14 +122,17 @@ export default function App() {
     () => (selectedItem ? getDisplayedFinger(serverPayload, selectedItem.noteId) : null),
     [serverPayload, selectedItem],
   );
-  const availableMeasures = useMemo(
-    () => Array.from(new Set(editorItems.map((item) => item.measure).filter((measure): measure is number => typeof measure === "number")))
-      .sort((a, b) => a - b),
-    [editorItems],
+  const keyboardPreviewGroups = useMemo(
+    () => getKeyboardPreviewGroups(displayPayload, lockedNoteFingerings, selectedNoteId),
+    [displayPayload, lockedNoteFingerings, selectedNoteId],
   );
-  const measureKeyboardPreviewNotes = useMemo(
-    () => getKeyboardPreviewNotesForMeasure(displayPayload, selectedMeasure, lockedNoteFingerings, selectedNoteId),
-    [displayPayload, lockedNoteFingerings, selectedMeasure, selectedNoteId],
+  const selectedPreviewGroup = useMemo(
+    () => keyboardPreviewGroups.find((group) => group.key === selectedPreviewKey) ?? keyboardPreviewGroups[0] ?? null,
+    [keyboardPreviewGroups, selectedPreviewKey],
+  );
+  const hoveredPreviewGroup = useMemo(
+    () => getKeyboardPreviewGroupForTarget(keyboardPreviewGroups, hoveredTarget),
+    [keyboardPreviewGroups, hoveredTarget],
   );
 
   const warnings = useMemo(() => {
@@ -187,23 +192,27 @@ export default function App() {
   }, [selectedItem, selectedNoteId]);
 
   useEffect(() => {
-    if (availableMeasures.length === 0) {
-      setSelectedMeasure(null);
-      setHoveredMeasure(null);
+    if (keyboardPreviewGroups.length === 0) {
+      setSelectedPreviewKey(null);
+      setHoveredTarget(null);
       return;
     }
 
-    setSelectedMeasure((current) => {
-      if (current != null && availableMeasures.includes(current)) {
+    setSelectedPreviewKey((current) => {
+      if (current && keyboardPreviewGroups.some((group) => group.key === current)) {
         return current;
       }
-      return selectedItem?.measure ?? availableMeasures[0];
-    });
 
-    setHoveredMeasure((current) => (
-      current != null && availableMeasures.includes(current) ? current : null
-    ));
-  }, [availableMeasures, selectedItem]);
+      if (selectedItem) {
+        const selectedGroup = keyboardPreviewGroups.find((group) => group.noteIds.includes(selectedItem.noteId));
+        if (selectedGroup) {
+          return selectedGroup.key;
+        }
+      }
+
+      return keyboardPreviewGroups[0]?.key ?? null;
+    });
+  }, [keyboardPreviewGroups, selectedItem]);
 
   useEffect(() => {
     let cancelled = false;
@@ -324,8 +333,9 @@ export default function App() {
     setManualEdits({});
     setLockedNoteFingerings({});
     setSelectedNoteId(null);
-    setSelectedMeasure(null);
-    setHoveredMeasure(null);
+    setSelectedPreviewKey(null);
+    setHoveredTarget(null);
+    setKeyboardTrayOpen(false);
     setErr(null);
   }
 
@@ -392,22 +402,15 @@ export default function App() {
     setErr(null);
   }
 
-  function onSelectMeasure(measure: number) {
-    setSelectedMeasure(measure);
-    setHoveredMeasure(measure);
-
-    const itemInMeasure = editorItems.find((item) => item.measure === measure);
-    if (itemInMeasure) {
-      setSelectedNoteId(itemInMeasure.noteId);
+  function onSelectTarget(target: ScorePassageTarget) {
+    const nextGroup = getKeyboardPreviewGroupForTarget(keyboardPreviewGroups, target);
+    if (!nextGroup) {
+      return;
     }
-  }
 
-  function onSelectScoreNote(noteId: string) {
-    setSelectedNoteId(noteId);
-    const item = editorItems.find((entry) => entry.noteId === noteId);
-    if (item?.measure != null) {
-      setSelectedMeasure(item.measure);
-      setHoveredMeasure(item.measure);
+    setSelectedPreviewKey(nextGroup.key);
+    if (!selectedNoteId || !nextGroup.noteIds.includes(selectedNoteId)) {
+      setSelectedNoteId(nextGroup.primaryNoteId ?? nextGroup.noteIds[0] ?? null);
     }
   }
 
@@ -416,8 +419,15 @@ export default function App() {
   const localEditCount = Object.keys(manualEdits).length;
   const scoreName = file ? file.name.replace(/\.(xml|musicxml|mxl)$/i, "") : "No score loaded";
   const composerLabel = file ? "Imported MusicXML score" : "Upload MusicXML or MXL to begin";
-  const selectedMeasureNoteCount = measureKeyboardPreviewNotes.length;
-  const selectedMeasureLabel = selectedMeasure != null ? `Measure ${selectedMeasure}` : "Choose a measure";
+  const selectedPreviewNotes = selectedPreviewGroup?.notes ?? [];
+  const selectedPreviewLabel = selectedPreviewGroup?.label ?? "Choose a passage";
+  const selectedPreviewNoteCount = selectedPreviewNotes.length;
+  const hoveredMeasure = hoveredPreviewGroup?.measure ?? hoveredTarget?.measureNumber ?? null;
+  const hoveredPreviewLabel = hoveredPreviewGroup?.label ?? (hoveredMeasure != null ? `Measure ${hoveredMeasure}` : null);
+  const selectedMeasureLabel = selectedPreviewLabel;
+  const selectedMeasureNoteCount = selectedPreviewNoteCount;
+  const measureKeyboardPreviewNotes = selectedPreviewNotes;
+  const hasScorePreview = Boolean(deferredAnnotatedXml);
 
   return (
     <div className="appShell">
@@ -612,6 +622,14 @@ export default function App() {
               <div className="toolbarDivider" />
 
               <div className="toolbarSection">
+                <button
+                  type="button"
+                  className={`toolbarGhostBtn toolbarToggleBtn ${keyboardTrayOpen ? "toolbarToggleBtn-active" : ""}`}
+                  onClick={() => setKeyboardTrayOpen((open) => !open)}
+                  disabled={!hasScorePreview}
+                >
+                  {keyboardTrayOpen ? "Keyboard On" : "Keyboard Off"}
+                </button>
                 {annotatedXml ? (
                   <button
                     className="toolbarExportBtn"
@@ -629,7 +647,7 @@ export default function App() {
               </div>
             </div>
 
-            <div className="scoreWorkspace">
+            <div className={`scoreWorkspace ${keyboardTrayOpen ? "scoreWorkspace-withTray" : ""}`}>
               <div className="scoreViewportInner">
                 {!deferredAnnotatedXml ? (
                   <div className="emptyState">
@@ -659,13 +677,18 @@ export default function App() {
                       viewMode="page"
                       pageIndex={pageIndex}
                       zoom={zoom}
-                      selectableNotes={editorItems}
-                      selectedNoteId={selectedNoteId}
-                      onNoteSelect={onSelectScoreNote}
-                      selectedMeasure={selectedMeasure}
-                      hoveredMeasure={hoveredMeasure}
-                      onMeasureHoverChange={setHoveredMeasure}
-                      onMeasureSelect={onSelectMeasure}
+                      selectedTarget={selectedPreviewGroup ? {
+                        measureNumber: selectedPreviewGroup.measure,
+                        staffEntryIndex: Math.max(0, selectedPreviewGroup.momentIndex - 1),
+                        staffEntryCount: Math.max(
+                          1,
+                          keyboardPreviewGroups.filter((group) => group.measure === selectedPreviewGroup.measure).length,
+                        ),
+                        tMeasBeats: selectedPreviewGroup.onsetBeats,
+                      } : null}
+                      hoveredTarget={hoveredTarget}
+                      onHoverTargetChange={setHoveredTarget}
+                      onSelectTarget={onSelectTarget}
                       onPageCountChange={(count) => {
                         setPageCount(count || 1);
                         setPageIndex((current) => Math.min(current, Math.max(0, (count || 1) - 1)));
@@ -675,31 +698,42 @@ export default function App() {
                 )}
               </div>
 
-              <div className="keyboardDock">
+              <div className={`keyboardDock keyboardDock-fixed ${keyboardTrayOpen ? "keyboardDock-open" : "keyboardDock-closed"}`}>
                 <div className="keyboardDockHeader">
                   <div>
-                    <div className="keyboardDockTitle">Measure Keyboard Preview</div>
+                    <div className="keyboardDockTitle">Keyboard Passage Preview</div>
                     <div className="keyboardDockMeta">
-                      {selectedMeasure != null
+                      {selectedPreviewGroup
                         ? `${selectedMeasureLabel} • ${selectedMeasureNoteCount} noteheads mapped below`
-                        : "Hover a measure to see its target area, then click to pin its fingerings on the keyboard."}
+                        : "Hover the score, then click a musical moment to pin its fingerings on the keyboard."}
                     </div>
                   </div>
-                  {hoveredMeasure != null && hoveredMeasure !== selectedMeasure ? (
-                    <div className="keyboardDockHint">Hovering m.{hoveredMeasure}</div>
-                  ) : (
-                    <div className="keyboardDockHint">Score stays above the keyboard in page mode</div>
-                  )}
+                  <div className="keyboardTrayActions">
+                    {hoveredPreviewLabel && hoveredPreviewLabel !== selectedPreviewLabel ? (
+                      <div className="keyboardDockHint">Hovering {hoveredPreviewLabel}</div>
+                    ) : (
+                      <div className="keyboardDockHint">Tray stays visible while you scroll the score</div>
+                    )}
+                    <button
+                      type="button"
+                      className="toolbarGhostBtn keyboardTrayCloseBtn"
+                      onClick={() => setKeyboardTrayOpen(false)}
+                    >
+                      Hide Keyboard
+                    </button>
+                  </div>
                 </div>
 
                 {measureKeyboardPreviewNotes.length > 0 ? (
                   <PianoKeyboard
                     activeNotes={measureKeyboardPreviewNotes}
-                    selectedPitchMidi={selectedItem?.measure === selectedMeasure ? selectedItem.pitchMidi : null}
+                    selectedPitchMidi={selectedItem && selectedPreviewGroup?.noteIds.includes(selectedItem.noteId)
+                      ? selectedItem.pitchMidi
+                      : null}
                   />
                 ) : (
                   <div className="keyboardDockEmpty">
-                    Click a visible measure on the page to project that measure's generated fingerings onto the keyboard.
+                    Click a visible passage on the page to project that moment's generated fingerings onto the keyboard.
                   </div>
                 )}
               </div>

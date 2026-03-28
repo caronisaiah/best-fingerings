@@ -1,4 +1,4 @@
-import type { FingeringEvent, HandName, ResultPayload } from "./types";
+import type { FingeringEvent, HandName, ResultPayload, ScorePassageTarget } from "./types";
 
 export type NoteEditorItem = {
   noteId: string;
@@ -6,6 +6,7 @@ export type NoteEditorItem = {
   eventId: number;
   measure: number | null;
   staffNumber: number | null;
+  tMeasBeats: number | null;
   pitchMidi: number;
   fingering: number;
   locked: boolean;
@@ -22,6 +23,17 @@ export type KeyboardPreviewNote = {
   finger: number | null;
   selected: boolean;
   locked: boolean;
+};
+
+export type KeyboardPreviewGroup = {
+  key: string;
+  measure: number;
+  onsetBeats: number;
+  momentIndex: number;
+  label: string;
+  notes: KeyboardPreviewNote[];
+  noteIds: string[];
+  primaryNoteId: string | null;
 };
 
 type NoteLocation = {
@@ -62,6 +74,7 @@ export function flattenFingeringItems(payload: ResultPayload | null, lockedFinge
           eventId: evt.event_id,
           measure: evt.measure ?? null,
           staffNumber: evt.xml_anchor?.staff ?? null,
+          tMeasBeats: typeof evt.t_meas_beats === "number" ? evt.t_meas_beats : null,
           pitchMidi: evt.pitch_midi,
           fingering: evt.fingering,
           locked: lockedFingerings[evt.note_id] !== undefined,
@@ -84,6 +97,7 @@ export function flattenFingeringItems(payload: ResultPayload | null, lockedFinge
             eventId: evt.event_id,
             measure: evt.measure ?? null,
             staffNumber: evt.xml_note_anchors?.[idx]?.staff ?? evt.xml_anchor?.staff ?? null,
+            tMeasBeats: typeof evt.t_meas_beats === "number" ? evt.t_meas_beats : null,
             pitchMidi: Array.isArray(evt.pitches_midi) ? evt.pitches_midi[idx] : -1,
             fingering: Array.isArray(evt.fingerings) ? evt.fingerings[idx] : 1,
             locked: lockedFingerings[noteId] !== undefined,
@@ -222,6 +236,149 @@ export function getKeyboardPreviewNotesForMeasure(
   }
 
   return out.sort((a, b) => a.pitchMidi - b.pitchMidi || a.hand.localeCompare(b.hand));
+}
+
+export function getKeyboardPreviewGroups(
+  payload: ResultPayload | null,
+  lockedFingerings: Record<string, number>,
+  selectedNoteId: string | null = null,
+): KeyboardPreviewGroup[] {
+  const groups = new Map<
+    string,
+    {
+      measure: number;
+      onsetBeats: number;
+      notes: KeyboardPreviewNote[];
+      noteIds: string[];
+      primaryNoteId: string | null;
+    }
+  >();
+  const hands = payload?.fingerings?.hands ?? {};
+
+  for (const hand of ["RH", "LH"] as HandName[]) {
+    const events = hands[hand] ?? [];
+
+    for (const evt of events) {
+      if (!evt || evt.measure == null) {
+        continue;
+      }
+
+      const onsetBeats = typeof evt.t_meas_beats === "number" ? evt.t_meas_beats : 0;
+      const key = getPreviewGroupKey(evt.measure, onsetBeats);
+      const existing = groups.get(key) ?? {
+        measure: evt.measure,
+        onsetBeats,
+        notes: [],
+        noteIds: [],
+        primaryNoteId: null,
+      };
+
+      if (evt.type === "note" && evt.note_id) {
+        existing.notes.push({
+          noteId: evt.note_id,
+          hand,
+          pitchMidi: evt.pitch_midi,
+          finger: evt.fingering,
+          selected: evt.note_id === selectedNoteId,
+          locked: lockedFingerings[evt.note_id] !== undefined,
+        });
+        existing.noteIds.push(evt.note_id);
+        if (existing.primaryNoteId == null || evt.note_id === selectedNoteId) {
+          existing.primaryNoteId = evt.note_id;
+        }
+      } else if (evt.type === "chord" && Array.isArray(evt.note_ids) && Array.isArray(evt.pitches_midi)) {
+        evt.note_ids.forEach((noteId: string | null, idx: number) => {
+          if (!noteId) {
+            return;
+          }
+
+          existing.notes.push({
+            noteId,
+            hand,
+            pitchMidi: evt.pitches_midi[idx],
+            finger: evt.fingerings[idx] ?? null,
+            selected: noteId === selectedNoteId,
+            locked: lockedFingerings[noteId] !== undefined,
+          });
+          existing.noteIds.push(noteId);
+          if (existing.primaryNoteId == null || noteId === selectedNoteId) {
+            existing.primaryNoteId = noteId;
+          }
+        });
+      }
+
+      groups.set(key, existing);
+    }
+  }
+
+  const grouped = Array.from(groups.entries())
+    .map(([key, group]) => ({
+      key,
+      measure: group.measure,
+      onsetBeats: group.onsetBeats,
+      notes: group.notes.sort((a, b) => a.pitchMidi - b.pitchMidi || a.hand.localeCompare(b.hand)),
+      noteIds: group.noteIds,
+      primaryNoteId: group.primaryNoteId,
+    }))
+    .sort((a, b) => a.measure - b.measure || a.onsetBeats - b.onsetBeats);
+
+  let currentMeasure = -1;
+  let momentIndex = 0;
+
+  return grouped.map((group) => {
+    if (group.measure !== currentMeasure) {
+      currentMeasure = group.measure;
+      momentIndex = 1;
+    } else {
+      momentIndex += 1;
+    }
+
+    return {
+      ...group,
+      momentIndex,
+      label: `Measure ${group.measure} • Moment ${momentIndex}`,
+    };
+  });
+}
+
+export function getKeyboardPreviewGroupForTarget(
+  groups: KeyboardPreviewGroup[],
+  target: ScorePassageTarget | null,
+): KeyboardPreviewGroup | null {
+  if (!target) {
+    return null;
+  }
+
+  const groupsInMeasure = groups.filter((group) => group.measure === target.measureNumber);
+  if (groupsInMeasure.length === 0) {
+    return null;
+  }
+
+  if (typeof target.tMeasBeats === "number" && Number.isFinite(target.tMeasBeats)) {
+    const targetBeats = target.tMeasBeats;
+    return groupsInMeasure.reduce((best, group) => {
+      if (!best) {
+        return group;
+      }
+      return Math.abs(group.onsetBeats - targetBeats) < Math.abs(best.onsetBeats - targetBeats)
+        ? group
+        : best;
+    }, groupsInMeasure[0] ?? null);
+  }
+
+  if (groupsInMeasure.length === 1) {
+    return groupsInMeasure[0];
+  }
+
+  const normalizedIndex = target.staffEntryCount > 1
+    ? target.staffEntryIndex / (target.staffEntryCount - 1)
+    : 0;
+  const groupIndex = Math.round(normalizedIndex * (groupsInMeasure.length - 1));
+  return groupsInMeasure[Math.max(0, Math.min(groupsInMeasure.length - 1, groupIndex))] ?? groupsInMeasure[0];
+}
+
+function getPreviewGroupKey(measure: number, onsetBeats: number) {
+  return `${measure}:${onsetBeats.toFixed(6)}`;
 }
 
 export function getDisplayedFinger(payload: ResultPayload | null, noteId: string): number | null {

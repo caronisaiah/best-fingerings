@@ -16,6 +16,10 @@ export type NoteFingeringEvent = {
   event_id: number;
   hand: HandName;
   measure?: number | null;
+  staff?: string | null;
+  voice?: string | number | null;
+  t_meas_beats?: number;
+  idx_meas_voice?: number;
   pitch_midi: number;
   fingering: number;
   note_id?: string | null;
@@ -27,6 +31,10 @@ export type ChordFingeringEvent = {
   event_id: number;
   hand: HandName;
   measure?: number | null;
+  staff?: string | null;
+  voice?: string | number | null;
+  t_meas_beats?: number;
+  idx_meas_voice?: number;
   pitches_midi: number[];
   fingerings: number[];
   note_id?: string | null;
@@ -51,4 +59,11 @@ export type ResultPayload = {
   fingerings?: FingeringsPayload;
   preferences?: Record<string, unknown>;
   versions?: Record<string, unknown>;
+};
+
+export type ScorePassageTarget = {
+  measureNumber: number;
+  staffEntryIndex: number;
+  staffEntryCount: number;
+  tMeasBeats: number | null;
 };

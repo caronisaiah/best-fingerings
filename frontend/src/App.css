@@ -35,8 +35,10 @@ body {
 
 .appShell {
   min-height: 100vh;
+  height: 100vh;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .topbar {
@@ -435,6 +437,7 @@ input[type="range"] {
   flex: 1;
   min-height: 0;
   overflow: hidden;
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 18px;
@@ -458,6 +461,11 @@ input[type="range"] {
   flex-direction: column;
   gap: 18px;
   overflow: hidden;
+}
+
+.scoreWorkspace-withTray .osmdHost {
+  box-sizing: border-box;
+  padding-bottom: 300px;
 }
 
 .scoreViewportInner {
@@ -484,6 +492,10 @@ input[type="range"] {
   width: 100%;
   height: 100%;
   min-height: 0;
+}
+
+.scoreInteractiveHost {
+  cursor: pointer;
 }
 
 .osmdHost svg {
@@ -633,6 +645,12 @@ input[type="range"] {
   background: rgba(255, 255, 255, 0.88);
   color: var(--text);
   box-shadow: inset 0 0 0 1px rgba(67, 70, 86, 0.12);
+}
+
+.toolbarToggleBtn-active {
+  background: rgba(29, 86, 216, 0.10);
+  color: var(--primary);
+  box-shadow: inset 0 0 0 1px rgba(29, 86, 216, 0.18);
 }
 
 .toolbarExportBtn {
@@ -790,6 +808,29 @@ input[type="range"] {
   box-shadow: var(--shadow-soft);
 }
 
+.keyboardDock-fixed {
+  position: absolute;
+  left: 18px;
+  right: 18px;
+  bottom: 18px;
+  z-index: 16;
+  transition:
+    opacity 180ms ease,
+    transform 180ms ease;
+}
+
+.keyboardDock-open {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.keyboardDock-closed {
+  opacity: 0;
+  transform: translateY(18px);
+  pointer-events: none;
+}
+
 .keyboardDockHeader {
   display: flex;
   align-items: flex-start;
@@ -816,6 +857,16 @@ input[type="range"] {
 .keyboardDockHint {
   max-width: 240px;
   text-align: right;
+}
+
+.keyboardTrayActions {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.keyboardTrayCloseBtn {
+  white-space: nowrap;
 }
 
 .keyboardDockEmpty {
@@ -954,6 +1005,33 @@ input[type="range"] {
   width: 100%;
   height: 100%;
   min-height: 0;
+}
+
+.scoreHoverBand {
+  position: absolute;
+  z-index: 8;
+  pointer-events: none;
+  border-radius: 4px;
+  background: rgba(29, 86, 216, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(29, 86, 216, 0.34);
+  transition:
+    box-shadow 140ms ease,
+    background-color 140ms ease,
+    opacity 120ms ease;
+}
+
+.scoreHoverBand-hovered {
+  background: rgba(29, 86, 216, 0.16);
+  box-shadow:
+    inset 0 0 0 1px rgba(29, 86, 216, 0.42),
+    0 0 0 1px rgba(29, 86, 216, 0.10);
+}
+
+.scoreHoverBand-selected {
+  background: rgba(29, 86, 216, 0.08);
+  box-shadow:
+    inset 0 0 0 1px rgba(29, 86, 216, 0.24),
+    0 0 0 1px rgba(29, 86, 216, 0.08);
 }
 
 .measureOverlayLayer {

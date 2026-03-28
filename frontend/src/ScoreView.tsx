@@ -1,43 +1,104 @@
-// src/ScoreView.tsx
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import * as OSMD from "opensheetmusicdisplay";
-import type { NoteEditorItem } from "./fingeringEditor";
+
+import type { ScorePassageTarget } from "./types";
 
 type ViewMode = "page" | "scroll";
 
-type MeasureOverlay = {
-  key: string;
-  measureNumber: number;
-  pageIndex: number;
+type HighlightRect = {
   left: number;
   top: number;
   width: number;
   height: number;
-};
-
-type NoteOverlay = {
-  key: string;
-  noteId: string;
-  pageIndex: number;
-  left: number;
-  top: number;
-  width: number;
-  height: number;
+  target: ScorePassageTarget;
 };
 
 type Props = {
   xmlText: string | null;
   viewMode?: ViewMode;
-  pageIndex?: number; // 0-based
-  zoom?: number; // 1.0 = 100%
+  pageIndex?: number;
+  zoom?: number;
   onPageCountChange?: (count: number) => void;
-  selectableNotes?: NoteEditorItem[];
-  selectedNoteId?: string | null;
-  onNoteSelect?: (noteId: string) => void;
-  selectedMeasure?: number | null;
-  hoveredMeasure?: number | null;
-  onMeasureHoverChange?: (measure: number | null) => void;
-  onMeasureSelect?: (measure: number) => void;
+  selectedTarget?: ScorePassageTarget | null;
+  hoveredTarget?: ScorePassageTarget | null;
+  onHoverTargetChange?: (target: ScorePassageTarget | null) => void;
+  onSelectTarget?: (target: ScorePassageTarget) => void;
+};
+
+type PointLike = {
+  x?: number;
+  y?: number;
+};
+
+type BoundingBoxLike = {
+  AbsolutePosition?: PointLike;
+  BorderLeft?: number;
+  BorderRight?: number;
+  BorderTop?: number;
+  BorderBottom?: number;
+};
+
+type GraphicalObjectLike = {
+  PositionAndShape?: BoundingBoxLike;
+};
+
+type FractionLike = {
+  RealValue?: number;
+  realValue?: number;
+  WholeValue?: number;
+  wholeValue?: number;
+  Numerator?: number;
+  numerator?: number;
+  Denominator?: number;
+  denominator?: number;
+};
+
+type GraphicalMusicPageLike = GraphicalObjectLike & {
+  PageNumber?: number;
+  MusicSystems?: MusicSystemLike[];
+};
+
+type MusicSystemLike = GraphicalObjectLike & {
+  Parent?: GraphicalMusicPageLike;
+  StaffLines?: StaffLineLike[];
+};
+
+type GraphicalMeasureLike = GraphicalObjectLike & {
+  MeasureNumber?: number;
+  staffEntries?: unknown[];
+  ParentMusicSystem?: MusicSystemLike;
+  ParentStaffLine?: StaffLineLike;
+};
+
+type SourceStaffEntryLike = {
+  Timestamp?: FractionLike;
+  hasNotes?: () => boolean;
+};
+
+type GraphicalStaffEntryLike = GraphicalObjectLike & {
+  parentMeasure?: GraphicalMeasureLike;
+  ParentMeasure?: GraphicalMeasureLike;
+  relInMeasureTimestamp?: FractionLike;
+  sourceStaffEntry?: SourceStaffEntryLike;
+  SourceStaffEntry?: SourceStaffEntryLike;
+  graphicalVoiceEntries?: unknown[];
+  getAbsoluteStartAndEnd?: () => [number, number];
+};
+
+type StaffLineLike = GraphicalObjectLike & {
+  ParentMusicSystem?: MusicSystemLike;
+  findClosestStaffEntry?: (xPosition: number) => unknown;
+};
+
+type GraphicalMusicSheetLike = {
+  domToSvg?: (point: { x: number; y: number }) => { x: number; y: number };
+  svgToOsmd?: (point: { x: number; y: number }) => { x: number; y: number };
+  MusicPages?: GraphicalMusicPageLike[];
+};
+
+type ResolvedPointerTarget = {
+  target: ScorePassageTarget;
+  rect: HighlightRect;
 };
 
 export function ScoreView({
@@ -46,45 +107,30 @@ export function ScoreView({
   pageIndex = 0,
   zoom = 1.0,
   onPageCountChange,
-  selectableNotes = [],
-  selectedNoteId = null,
-  onNoteSelect,
-  selectedMeasure = null,
-  hoveredMeasure = null,
-  onMeasureHoverChange,
-  onMeasureSelect,
+  selectedTarget = null,
+  hoveredTarget = null,
+  onHoverTargetChange,
+  onSelectTarget,
 }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const osmdRef = useRef<OSMD.OpenSheetMusicDisplay | null>(null);
-  const [measureOverlays, setMeasureOverlays] = useState<MeasureOverlay[]>([]);
-  const [noteOverlays, setNoteOverlays] = useState<NoteOverlay[]>([]);
-
-  const syncMeasureOverlays = useEffectEvent((host: HTMLDivElement, osmd: OSMD.OpenSheetMusicDisplay) => {
-    setMeasureOverlays(collectMeasureOverlays(host, osmd));
-  });
-  const syncNoteOverlays = useEffectEvent((host: HTMLDivElement, osmd: OSMD.OpenSheetMusicDisplay) => {
-    setNoteOverlays(collectNoteOverlays(host, osmd, selectableNotes));
-  });
+  const [hoverRect, setHoverRect] = useState<HighlightRect | null>(null);
+  const [selectedRect, setSelectedRect] = useState<HighlightRect | null>(null);
 
   const renderCurrentView = useEffectEvent((host: HTMLDivElement, osmd: OSMD.OpenSheetMusicDisplay) => {
     const instance = osmd as OSMD.OpenSheetMusicDisplay & { Zoom: number };
     instance.Zoom = zoom;
     instance.render();
     applyPaginationAndStyling(host, viewMode, pageIndex, zoom, onPageCountChange);
-    syncMeasureOverlays(host, osmd);
-    syncNoteOverlays(host, osmd);
   });
 
-  // Load + render whenever xmlText changes
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
 
-    // ✅ TS-safe across async
     const hostEl: HTMLDivElement = host;
-
     if (typeof xmlText !== "string" || xmlText.length === 0) return;
-    const xml: string = xmlText;
+    const xml = xmlText;
 
     let cancelled = false;
 
@@ -106,17 +152,16 @@ export function ScoreView({
       if (cancelled) return;
 
       renderCurrentView(hostEl, osmd);
-    })().catch((e) => console.error("OSMD render failed:", e));
+    })().catch((error) => console.error("OSMD render failed:", error));
 
     return () => {
       cancelled = true;
       osmdRef.current = null;
-      setMeasureOverlays([]);
-      setNoteOverlays([]);
+      setHoverRect(null);
+      setSelectedRect(null);
     };
-  }, [xmlText]); // only reload when XML changes
+  }, [xmlText]);
 
-  // Re-apply zoom/page mode without reloading XML
   useEffect(() => {
     const host = hostRef.current;
     const osmd = osmdRef.current;
@@ -125,99 +170,137 @@ export function ScoreView({
     if (typeof xmlText !== "string" || xmlText.length === 0) return;
 
     renderCurrentView(host, osmd);
-  }, [zoom, viewMode, pageIndex, xmlText, selectableNotes]);
+  }, [zoom, viewMode, pageIndex, xmlText]);
 
   useEffect(() => {
+    setSelectedRect(resolveTargetRectFromSelection(hostRef.current, osmdRef.current, pageIndex, selectedTarget));
+  }, [pageIndex, selectedTarget, xmlText, zoom]);
+
+  function resolvePointerTarget(clientX: number, clientY: number): ResolvedPointerTarget | null {
     const host = hostRef.current;
     const osmd = osmdRef.current;
+    const graphicSheet = (osmd as OSMD.OpenSheetMusicDisplay & {
+      GraphicSheet?: GraphicalMusicSheetLike;
+    }).GraphicSheet;
 
-    if (!host || !osmd) {
-      return;
+    if (!host || !graphicSheet) {
+      return null;
     }
 
-    const observer = new ResizeObserver(() => {
-      syncMeasureOverlays(host, osmd);
-      syncNoteOverlays(host, osmd);
-    });
+    const visibleSvg = getVisibleSvg(host, pageIndex);
+    if (!visibleSvg) {
+      return null;
+    }
 
-    observer.observe(host);
-    return () => observer.disconnect();
-  }, [xmlText]);
+    const svgRect = visibleSvg.getBoundingClientRect();
+    if (
+      clientX < svgRect.left
+      || clientX > svgRect.right
+      || clientY < svgRect.top
+      || clientY > svgRect.bottom
+    ) {
+      return null;
+    }
 
-  const visibleOverlays = measureOverlays.filter((overlay) => (
-    viewMode === "scroll" ? true : overlay.pageIndex === pageIndex
-  ));
-  const visibleNoteOverlays = noteOverlays.filter((overlay) => (
-    viewMode === "scroll" ? true : overlay.pageIndex === pageIndex
-  ));
+    const domPoint = { x: clientX, y: clientY };
+    const svgPoint = graphicSheet.domToSvg ? graphicSheet.domToSvg(domPoint) : domPoint;
+    const osmdPoint = graphicSheet.svgToOsmd ? graphicSheet.svgToOsmd(svgPoint) : svgPoint;
+    const visiblePage = getVisiblePage(graphicSheet, pageIndex);
+    if (!visiblePage) {
+      return null;
+    }
+
+    const staffEntry = findVisiblePageStaffEntry(visiblePage, osmdPoint);
+    if (!staffEntry) {
+      return null;
+    }
+
+    const measure = getParentMeasure(staffEntry);
+    const measureNumber = typeof measure?.MeasureNumber === "number" ? measure.MeasureNumber : null;
+    if (measureNumber == null) {
+      return null;
+    }
+
+    const interactiveEntries = getInteractiveStaffEntries(measure);
+    const staffEntryIndex = Math.max(0, interactiveEntries.indexOf(staffEntry));
+    const staffEntryCount = Math.max(1, interactiveEntries.length);
+    const tMeasBeats = getFractionRealValue(
+      staffEntry.relInMeasureTimestamp
+      ?? staffEntry.sourceStaffEntry?.Timestamp
+      ?? staffEntry.SourceStaffEntry?.Timestamp
+      ?? null,
+    );
+
+    const target: ScorePassageTarget = {
+      measureNumber,
+      staffEntryIndex,
+      staffEntryCount,
+      tMeasBeats,
+    };
+
+    const rect = buildHighlightRect(host, visibleSvg, visiblePage, staffEntry, interactiveEntries, target);
+    if (!rect) {
+      return null;
+    }
+
+    return { target, rect };
+  }
 
   return (
     <div className="osmdHostWrap">
       <div
         ref={hostRef}
-        className="osmdHost"
-        onMouseLeave={() => onMeasureHoverChange?.(null)}
+        className="osmdHost scoreInteractiveHost"
+        onMouseMove={(event) => {
+          const resolved = resolvePointerTarget(event.clientX, event.clientY);
+          if (!resolved) {
+            setHoverRect(null);
+            onHoverTargetChange?.(null);
+            return;
+          }
+
+          setHoverRect(resolved.rect);
+          onHoverTargetChange?.(resolved.target);
+        }}
+        onMouseLeave={() => {
+          setHoverRect(null);
+          onHoverTargetChange?.(null);
+        }}
+        onClick={(event) => {
+          const resolved = resolvePointerTarget(event.clientX, event.clientY);
+          if (resolved) {
+            onSelectTarget?.(resolved.target);
+          }
+        }}
       />
 
-      {visibleOverlays.length > 0 ? (
-        <div className="measureOverlayLayer" aria-hidden="true">
-          {visibleOverlays.map((overlay) => {
-            const isSelected = selectedMeasure === overlay.measureNumber;
-            const isHovered = hoveredMeasure === overlay.measureNumber;
-
-            return (
-              <button
-                key={overlay.key}
-                type="button"
-                className={[
-                  "measureOverlay",
-                  isSelected ? "measureOverlay-selected" : "",
-                  isHovered ? "measureOverlay-hovered" : "",
-                ]
-                  .filter(Boolean)
-                  .join(" ")}
-                style={{
-                  left: overlay.left,
-                  top: overlay.top,
-                  width: overlay.width,
-                  height: overlay.height,
-                }}
-                onMouseEnter={() => onMeasureHoverChange?.(overlay.measureNumber)}
-                onFocus={() => onMeasureHoverChange?.(overlay.measureNumber)}
-                onBlur={() => onMeasureHoverChange?.(null)}
-                onClick={() => onMeasureSelect?.(overlay.measureNumber)}
-                title={`Measure ${overlay.measureNumber}`}
-              >
-                <span className="measureOverlayLabel">m.{overlay.measureNumber}</span>
-              </button>
-            );
-          })}
-        </div>
+      {selectedRect ? (
+        <div
+          className="scoreHoverBand scoreHoverBand-selected"
+          style={{
+            left: selectedRect.left,
+            top: selectedRect.top,
+            width: selectedRect.width,
+            height: selectedRect.height,
+          }}
+        />
       ) : null}
 
-      {visibleNoteOverlays.length > 0 ? (
-        <div className="noteOverlayLayer">
-          {visibleNoteOverlays.map((overlay) => (
-            <button
-              key={overlay.key}
-              type="button"
-              className={[
-                "noteOverlay",
-                selectedNoteId === overlay.noteId ? "noteOverlay-selected" : "",
-              ]
-                .filter(Boolean)
-                .join(" ")}
-              style={{
-                left: overlay.left,
-                top: overlay.top,
-                width: overlay.width,
-                height: overlay.height,
-              }}
-              onClick={() => onNoteSelect?.(overlay.noteId)}
-              title="Select note"
-            />
-          ))}
-        </div>
+      {hoverRect ? (
+        <div
+          className={[
+            "scoreHoverBand",
+            sameTarget(hoveredTarget, hoverRect.target) ? "scoreHoverBand-hovered" : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
+          style={{
+            left: hoverRect.left,
+            top: hoverRect.top,
+            width: hoverRect.width,
+            height: hoverRect.height,
+          }}
+        />
       ) : null}
     </div>
   );
@@ -228,22 +311,17 @@ function applyPaginationAndStyling(
   viewMode: ViewMode,
   pageIndex: number,
   zoom: number,
-  onPageCountChange?: (count: number) => void
+  onPageCountChange?: (count: number) => void,
 ) {
   const svgs = Array.from(host.querySelectorAll("svg")) as SVGSVGElement[];
   const pageCount = Math.max(1, svgs.length);
   onPageCountChange?.(pageCount);
 
-  // ✅ Host styling: fixes “sliver” + centers pages
   host.style.display = "flex";
   host.style.flexDirection = "column";
   host.style.alignItems = "center";
   host.style.gap = "16px";
   host.style.padding = "16px";
-
-  // IMPORTANT:
-  // - In scroll mode, allow normal scrolling
-  // - In page mode, do NOT accidentally clip the SVG width; allow horizontal scroll when zoomed
   host.style.overflowY = "auto";
   host.style.overflowX = zoom > 1.05 ? "auto" : "hidden";
 
@@ -252,397 +330,387 @@ function applyPaginationAndStyling(
     svg.style.borderRadius = "12px";
     svg.style.boxShadow = "0 10px 30px rgba(15, 23, 42, 0.10)";
     svg.style.display = "block";
-
-    // ✅ Critical: make page fill container width
     svg.style.width = "min(1100px, 100%)";
     svg.style.height = "auto";
   }
 
   if (viewMode === "scroll") {
-    for (const svg of svgs) svg.style.display = "block";
+    for (const svg of svgs) {
+      svg.style.display = "block";
+    }
     return;
   }
 
-  const idx = clamp(pageIndex, 0, pageCount - 1);
-  svgs.forEach((svg, i) => {
-    svg.style.display = i === idx ? "block" : "none";
+  const visibleIndex = clamp(pageIndex, 0, pageCount - 1);
+  svgs.forEach((svg, index) => {
+    svg.style.display = index === visibleIndex ? "block" : "none";
   });
 }
 
-function clamp(v: number, lo: number, hi: number) {
-  return Math.max(lo, Math.min(hi, v));
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
 }
 
-function collectMeasureOverlays(host: HTMLDivElement, osmd: OSMD.OpenSheetMusicDisplay): MeasureOverlay[] {
-  const graphicSheet = (osmd as OSMD.OpenSheetMusicDisplay & {
-    GraphicSheet?: {
-      MusicPages?: unknown[];
-    };
-  }).GraphicSheet;
-  const pages = Array.isArray(graphicSheet?.MusicPages) ? graphicSheet.MusicPages : [];
+function getVisibleSvg(host: HTMLDivElement, pageIndex: number) {
   const svgs = Array.from(host.querySelectorAll("svg")) as SVGSVGElement[];
-  const overlays: MeasureOverlay[] = [];
-  const hostRect = host.getBoundingClientRect();
-
-  pages.forEach((pageCandidate, pageIdx) => {
-    const page = pageCandidate as {
-      MusicSystems?: unknown[];
-      PositionAndShape?: unknown;
-    };
-    const svg = svgs[pageIdx];
-    if (!svg) {
-      return;
-    }
-
-    const pageOrigin = getPageOrigin(page.PositionAndShape);
-    const scale = getSvgScale(svg);
-    const systems = Array.isArray(page.MusicSystems) ? page.MusicSystems : [];
-
-    systems.forEach((systemCandidate, systemIdx) => {
-      const system = systemCandidate as {
-        GraphicalMeasures?: unknown[][];
-      };
-      const groupedMeasures = new Map<number, { left: number; top: number; right: number; bottom: number }>();
-      const rows = Array.isArray(system.GraphicalMeasures) ? system.GraphicalMeasures : [];
-
-      rows.flat().forEach((measureCandidate) => {
-        const measure = measureCandidate as {
-          IsExtraGraphicalMeasure?: boolean;
-          MeasureNumber?: number;
-          PositionAndShape?: unknown;
-        };
-        if (!measure || measure.IsExtraGraphicalMeasure) {
-          return;
-        }
-
-        const measureNumber = typeof measure.MeasureNumber === "number" ? measure.MeasureNumber : null;
-        if (measureNumber == null || measureNumber < 1) {
-          return;
-        }
-
-        const rect = getBoundingRect(measure.PositionAndShape);
-        if (!rect) {
-          return;
-        }
-
-        const localLeft = Math.max(0, rect.x - pageOrigin.x);
-        const localTop = Math.max(0, rect.y - pageOrigin.y);
-        const localRight = Math.max(localLeft, localLeft + rect.width);
-        const localBottom = Math.max(localTop, localTop + rect.height);
-        const existing = groupedMeasures.get(measureNumber);
-
-        if (!existing) {
-          groupedMeasures.set(measureNumber, {
-            left: localLeft,
-            top: localTop,
-            right: localRight,
-            bottom: localBottom,
-          });
-          return;
-        }
-
-        existing.left = Math.min(existing.left, localLeft);
-        existing.top = Math.min(existing.top, localTop);
-        existing.right = Math.max(existing.right, localRight);
-        existing.bottom = Math.max(existing.bottom, localBottom);
-      });
-
-      groupedMeasures.forEach((rect, measureNumber) => {
-        const svgRect = svg.getBoundingClientRect();
-        const svgLeft = svgRect.left - hostRect.left + host.scrollLeft;
-        const svgTop = svgRect.top - hostRect.top + host.scrollTop;
-
-        overlays.push({
-          key: `page-${pageIdx}-system-${systemIdx}-measure-${measureNumber}`,
-          measureNumber,
-          pageIndex: pageIdx,
-          left: svgLeft + rect.left * scale.x,
-          top: svgTop + rect.top * scale.y,
-          width: Math.max(18, (rect.right - rect.left) * scale.x),
-          height: Math.max(18, (rect.bottom - rect.top) * scale.y),
-        });
-      });
-    });
-  });
-
-  return overlays;
+  return svgs[clamp(pageIndex, 0, Math.max(0, svgs.length - 1))] ?? null;
 }
 
-function collectNoteOverlays(
+function getVisiblePage(graphicSheet: GraphicalMusicSheetLike, pageIndex: number) {
+  const pages = graphicSheet.MusicPages ?? [];
+  return pages[clamp(pageIndex, 0, Math.max(0, pages.length - 1))] ?? null;
+}
+
+function getParentMeasure(staffEntry: GraphicalStaffEntryLike | null) {
+  return staffEntry?.parentMeasure ?? staffEntry?.ParentMeasure ?? null;
+}
+
+function getInteractiveStaffEntries(parentMeasure: GraphicalMeasureLike | null) {
+  const entries = Array.isArray(parentMeasure?.staffEntries) ? [...parentMeasure.staffEntries] as GraphicalStaffEntryLike[] : [];
+
+  const filtered = entries.filter((entry) => {
+    const sourceStaffEntry = entry.sourceStaffEntry ?? entry.SourceStaffEntry;
+    if (typeof sourceStaffEntry?.hasNotes === "function") {
+      return sourceStaffEntry.hasNotes();
+    }
+    return Array.isArray(entry.graphicalVoiceEntries) ? entry.graphicalVoiceEntries.length > 0 : true;
+  });
+
+  filtered.sort((left, right) => {
+    const leftTime = getFractionRealValue(left.relInMeasureTimestamp ?? left.sourceStaffEntry?.Timestamp ?? null) ?? 0;
+    const rightTime = getFractionRealValue(right.relInMeasureTimestamp ?? right.sourceStaffEntry?.Timestamp ?? null) ?? 0;
+    return leftTime - rightTime;
+  });
+
+  return filtered;
+}
+
+function findVisiblePageStaffEntry(visiblePage: GraphicalMusicPageLike, osmdPoint: { x: number; y: number }) {
+  const systems = visiblePage.MusicSystems ?? [];
+  if (systems.length === 0) {
+    return null;
+  }
+
+  const system = findBestSystemForPoint(systems, osmdPoint);
+  if (!system) {
+    return null;
+  }
+
+  const staffLines = system.StaffLines ?? [];
+  if (staffLines.length === 0) {
+    return null;
+  }
+
+  const closestStaffLine = findClosestStaffLine(staffLines, osmdPoint.y);
+  if (!closestStaffLine?.findClosestStaffEntry) {
+    return null;
+  }
+
+  const staffEntry = closestStaffLine.findClosestStaffEntry(osmdPoint.x) as GraphicalStaffEntryLike | null;
+  if (!staffEntry) {
+    return null;
+  }
+
+  const staffEntryPage = getPageOfStaffEntry(staffEntry);
+  if (staffEntryPage && staffEntryPage !== visiblePage) {
+    return null;
+  }
+
+  return staffEntry;
+}
+
+function findBestSystemForPoint(systems: MusicSystemLike[], osmdPoint: { x: number; y: number }) {
+  const candidates = systems
+    .map((system) => {
+      const bounds = getObjectBounds(system);
+      if (!bounds) {
+        return null;
+      }
+
+      const withinX = osmdPoint.x >= bounds.left - 12 && osmdPoint.x <= bounds.right + 12;
+      const verticalDistance = distanceToBand(osmdPoint.y, bounds.top, bounds.bottom);
+      return { system, withinX, verticalDistance };
+    })
+    .filter((candidate): candidate is { system: MusicSystemLike; withinX: boolean; verticalDistance: number } => Boolean(candidate))
+    .filter((candidate) => candidate.withinX)
+    .sort((left, right) => left.verticalDistance - right.verticalDistance);
+
+  return candidates[0]?.system ?? null;
+}
+
+function findClosestStaffLine(staffLines: StaffLineLike[], y: number) {
+  const ranked = staffLines
+    .map((staffLine) => {
+      const bounds = getObjectBounds(staffLine);
+      if (!bounds) {
+        return null;
+      }
+      return {
+        staffLine,
+        distance: distanceToBand(y, bounds.top, bounds.bottom),
+      };
+    })
+    .filter((entry): entry is { staffLine: StaffLineLike; distance: number } => Boolean(entry))
+    .sort((left, right) => left.distance - right.distance);
+
+  return ranked[0]?.staffLine ?? null;
+}
+
+function buildHighlightRect(
   host: HTMLDivElement,
-  osmd: OSMD.OpenSheetMusicDisplay,
-  selectableNotes: NoteEditorItem[],
-): NoteOverlay[] {
-  if (selectableNotes.length === 0) {
-    return [];
+  visibleSvg: SVGSVGElement,
+  visiblePage: GraphicalMusicPageLike,
+  staffEntry: GraphicalStaffEntryLike,
+  interactiveEntries: GraphicalStaffEntryLike[],
+  target: ScorePassageTarget,
+): HighlightRect | null {
+  const measure = getParentMeasure(staffEntry);
+  const system = measure?.ParentMusicSystem ?? measure?.ParentStaffLine?.ParentMusicSystem ?? null;
+  const staffLines = system?.StaffLines ?? [];
+  const firstStaffLine = staffLines[0] ?? null;
+  const lastStaffLine = staffLines[staffLines.length - 1] ?? firstStaffLine;
+  const pageBounds = getObjectBounds(visiblePage);
+  const firstStaffBounds = firstStaffLine ? getObjectBounds(firstStaffLine) : null;
+  const lastStaffBounds = lastStaffLine ? getObjectBounds(lastStaffLine) : firstStaffBounds;
+  const measureBounds = measure ? getObjectBounds(measure) : null;
+
+  if (!pageBounds || !firstStaffBounds || !lastStaffBounds || !measureBounds) {
+    return null;
+  }
+
+  const currentEntry = interactiveEntries[target.staffEntryIndex] ?? staffEntry;
+  const nextEntry = interactiveEntries[target.staffEntryIndex + 1] ?? null;
+  const currentSpan = getStaffEntrySpan(currentEntry);
+  const nextSpan = nextEntry ? getStaffEntrySpan(nextEntry) : null;
+
+  const left = currentSpan?.left ?? measureBounds.left;
+  const right = nextSpan?.left ?? currentSpan?.right ?? measureBounds.right;
+  const safeRight = Math.max(right, left + 18);
+
+  return osmdRectToDomRect(
+    host,
+    visibleSvg,
+    pageBounds,
+    {
+      left: left - 2,
+      right: safeRight + 2,
+      top: firstStaffBounds.top - 4,
+      bottom: lastStaffBounds.bottom + 4,
+    },
+    target,
+  );
+}
+
+function resolveTargetRectFromSelection(
+  host: HTMLDivElement | null,
+  osmd: OSMD.OpenSheetMusicDisplay | null,
+  pageIndex: number,
+  target: ScorePassageTarget | null,
+) {
+  if (!host || !osmd || !target) {
+    return null;
   }
 
   const graphicSheet = (osmd as OSMD.OpenSheetMusicDisplay & {
-    GraphicSheet?: {
-      MusicPages?: unknown[];
-    };
+    GraphicSheet?: GraphicalMusicSheetLike;
   }).GraphicSheet;
-  const pages = Array.isArray(graphicSheet?.MusicPages) ? graphicSheet.MusicPages : [];
-  const svgs = Array.from(host.querySelectorAll("svg")) as SVGSVGElement[];
-  const hostRect = host.getBoundingClientRect();
-  const renderedNotes: Array<{
-    pageIndex: number;
-    measure: number;
-    staffNumber: number;
-    pitchMidi: number;
-    left: number;
-    top: number;
-    width: number;
-    height: number;
-  }> = [];
+  if (!graphicSheet) {
+    return null;
+  }
 
-  pages.forEach((pageCandidate, pageIdx) => {
-    const page = pageCandidate as {
-      MusicSystems?: unknown[];
-      PositionAndShape?: unknown;
-    };
-    const svg = svgs[pageIdx];
-    if (!svg) {
-      return;
+  const visiblePage = getVisiblePage(graphicSheet, pageIndex);
+  const visibleSvg = getVisibleSvg(host, pageIndex);
+  if (!visiblePage || !visibleSvg) {
+    return null;
+  }
+
+  const systems = visiblePage.MusicSystems ?? [];
+  for (const system of systems) {
+    const staffLines = system.StaffLines ?? [];
+    for (const staffLine of staffLines) {
+      const staffLineBounds = getObjectBounds(staffLine);
+      if (!staffLineBounds) {
+        continue;
+      }
+
+      const candidateMeasures = getSystemMeasuresByNumber(system, target.measureNumber);
+      for (const measure of candidateMeasures) {
+        const interactiveEntries = getInteractiveStaffEntries(measure);
+        const entry = interactiveEntries[target.staffEntryIndex];
+        if (!entry) {
+          continue;
+        }
+
+        const entryTime = getFractionRealValue(
+          entry.relInMeasureTimestamp
+          ?? entry.sourceStaffEntry?.Timestamp
+          ?? entry.SourceStaffEntry?.Timestamp
+          ?? null,
+        );
+        if (
+          target.tMeasBeats != null
+          && entryTime != null
+          && Math.abs(target.tMeasBeats - entryTime) > 0.001
+        ) {
+          continue;
+        }
+
+        return buildHighlightRect(host, visibleSvg, visiblePage, entry, interactiveEntries, target);
+      }
     }
+  }
 
-    const svgRect = svg.getBoundingClientRect();
-    const svgLeft = svgRect.left - hostRect.left + host.scrollLeft;
-    const svgTop = svgRect.top - hostRect.top + host.scrollTop;
-    const pageOrigin = getPageOrigin(page.PositionAndShape);
-    const scale = getSvgScale(svg);
-    const systems = Array.isArray(page.MusicSystems) ? page.MusicSystems : [];
+  return null;
+}
 
-    systems.forEach((systemCandidate) => {
-      const system = systemCandidate as {
-        GraphicalMeasures?: unknown[][];
-      };
-      const rows = Array.isArray(system.GraphicalMeasures) ? system.GraphicalMeasures : [];
-
-      rows.forEach((row, rowIndex) => {
-        row.forEach((measureCandidate) => {
-          const measure = measureCandidate as {
-            MeasureNumber?: number;
-            staffEntries?: unknown[];
-          };
-          const measureNumber = typeof measure.MeasureNumber === "number" ? measure.MeasureNumber : null;
-          if (measureNumber == null || !Array.isArray(measure.staffEntries)) {
-            return;
-          }
-
-          measure.staffEntries.forEach((entryCandidate) => {
-            const entry = entryCandidate as {
-              graphicalVoiceEntries?: Array<{ notes?: unknown[] }>;
-            };
-            const voiceEntries = Array.isArray(entry.graphicalVoiceEntries) ? entry.graphicalVoiceEntries : [];
-
-            voiceEntries.forEach((voiceEntry) => {
-              const notes = Array.isArray(voiceEntry.notes) ? voiceEntry.notes : [];
-
-              notes.forEach((noteCandidate) => {
-                const note = noteCandidate as {
-                  sourceNote?: {
-                    isRest?: () => boolean;
-                    Pitch?: { getHalfTone?: () => number };
-                    halfTone?: number;
-                  };
-                  PositionAndShape?: unknown;
-                };
-
-                const sourceNote = note.sourceNote;
-                if (sourceNote?.isRest?.()) {
-                  return;
-                }
-
-                const rect = getBoundingRect(note.PositionAndShape);
-                if (!rect) {
-                  return;
-                }
-
-                const rawPitch = sourceNote?.Pitch?.getHalfTone?.() ?? sourceNote?.halfTone;
-                if (typeof rawPitch !== "number") {
-                  return;
-                }
-
-                const localLeft = Math.max(0, rect.x - pageOrigin.x);
-                const localTop = Math.max(0, rect.y - pageOrigin.y);
-
-                renderedNotes.push({
-                  pageIndex: pageIdx,
-                  measure: measureNumber,
-                  staffNumber: rowIndex + 1,
-                  pitchMidi: rawPitch,
-                  left: svgLeft + localLeft * scale.x - 4,
-                  top: svgTop + localTop * scale.y - 4,
-                  width: Math.max(14, rect.width * scale.x + 8),
-                  height: Math.max(14, rect.height * scale.y + 8),
-                });
-              });
-            });
-          });
-        });
-      });
-    });
+function getSystemMeasuresByNumber(system: MusicSystemLike, measureNumber: number) {
+  const staffLines = system.StaffLines ?? [];
+  const measures = staffLines.flatMap((staffLine) => {
+    const measuresList = (staffLine as { Measures?: GraphicalMeasureLike[] }).Measures ?? [];
+    return measuresList.filter((measure) => measure.MeasureNumber === measureNumber);
   });
 
-  return mapRenderedNotesToSelectable(renderedNotes, selectableNotes);
-}
-
-function mapRenderedNotesToSelectable(
-  renderedNotes: Array<{
-    pageIndex: number;
-    measure: number;
-    staffNumber: number;
-    pitchMidi: number;
-    left: number;
-    top: number;
-    width: number;
-    height: number;
-  }>,
-  selectableNotes: NoteEditorItem[],
-): NoteOverlay[] {
-  const buckets = new Map<string, NoteEditorItem[]>();
-
-  selectableNotes
-    .filter((note): note is NoteEditorItem & { measure: number } => typeof note.measure === "number")
-    .forEach((note) => {
-      const key = createNoteBucketKey(note.measure, note.staffNumber, note.pitchMidi);
-      const existing = buckets.get(key) ?? [];
-      existing.push(note);
-      buckets.set(key, existing);
-    });
-
-  const usage = new Map<string, number>();
-  const overlays: NoteOverlay[] = [];
-
-  renderedNotes.forEach((note, index) => {
-    const exactKey = createNoteBucketKey(note.measure, note.staffNumber, note.pitchMidi);
-    const looseKey = createNoteBucketKey(note.measure, null, note.pitchMidi);
-    const matchingKey = buckets.has(exactKey) ? exactKey : looseKey;
-    const candidates = buckets.get(matchingKey);
-    if (!candidates || candidates.length === 0) {
-      return;
+  const unique = new Set<GraphicalMeasureLike>();
+  return measures.filter((measure) => {
+    if (unique.has(measure)) {
+      return false;
     }
-
-    const usedCount = usage.get(matchingKey) ?? 0;
-    const selected = candidates[usedCount];
-    if (!selected) {
-      return;
-    }
-
-    usage.set(matchingKey, usedCount + 1);
-    overlays.push({
-      key: `note-${selected.noteId}-${index}`,
-      noteId: selected.noteId,
-      pageIndex: note.pageIndex,
-      left: note.left,
-      top: note.top,
-      width: note.width,
-      height: note.height,
-    });
+    unique.add(measure);
+    return true;
   });
-
-  return overlays;
 }
 
-function createNoteBucketKey(measure: number, staffNumber: number | null, pitchMidi: number) {
-  return `${measure}|${staffNumber ?? "any"}|${pitchMidi}`;
+function getPageOfStaffEntry(staffEntry: GraphicalStaffEntryLike) {
+  return getParentMeasure(staffEntry)?.ParentMusicSystem?.Parent ?? null;
 }
 
-function getPageOrigin(positionAndShape: unknown) {
-  const absolute = (positionAndShape as { AbsolutePosition?: { x?: number; y?: number } } | null)?.AbsolutePosition;
-  if (absolute?.x != null || absolute?.y != null) {
-    return {
-      x: absolute?.x ?? 0,
-      y: absolute?.y ?? 0,
-    };
+function getStaffEntrySpan(staffEntry: GraphicalStaffEntryLike | null) {
+  if (!staffEntry) {
+    return null;
   }
 
-  const rect = getBoundingRect(positionAndShape);
-  if (rect) {
-    return { x: rect.x, y: rect.y };
+  if (typeof staffEntry.getAbsoluteStartAndEnd === "function") {
+    const [left, right] = staffEntry.getAbsoluteStartAndEnd();
+    return { left, right };
   }
 
-  return { x: 0, y: 0 };
-}
-
-function getBoundingRect(positionAndShape: unknown) {
-  const shape = positionAndShape as {
-    AbsolutePosition?: { x?: number; y?: number };
-    UpperLeftCorner?: { x?: number; y?: number };
-    Size?: { width?: number; height?: number };
-    BorderLeft?: number;
-    BorderRight?: number;
-    BorderTop?: number;
-    BorderBottom?: number;
-    BorderMarginLeft?: number;
-    BorderMarginRight?: number;
-    BorderMarginTop?: number;
-    BorderMarginBottom?: number;
-    BoundingMarginRectangle?: { x: number; y: number; width: number; height: number };
-    BoundingRectangle?: { x: number; y: number; width: number; height: number };
-  } | null;
-  const absolute = shape?.AbsolutePosition;
-  const useMarginBorders = [
-    shape?.BorderMarginLeft,
-    shape?.BorderMarginRight,
-    shape?.BorderMarginTop,
-    shape?.BorderMarginBottom,
-  ].every((value) => typeof value === "number");
-  const useBorders = [
-    shape?.BorderLeft,
-    shape?.BorderRight,
-    shape?.BorderTop,
-    shape?.BorderBottom,
-  ].every((value) => typeof value === "number");
-
-  if (absolute && useMarginBorders) {
-    return {
-      x: (absolute.x ?? 0) + (shape?.BorderMarginLeft ?? 0),
-      y: (absolute.y ?? 0) + (shape?.BorderMarginTop ?? 0),
-      width: (shape?.BorderMarginRight ?? 0) - (shape?.BorderMarginLeft ?? 0),
-      height: (shape?.BorderMarginBottom ?? 0) - (shape?.BorderMarginTop ?? 0),
-    };
-  }
-
-  if (absolute && useBorders) {
-    return {
-      x: (absolute.x ?? 0) + (shape?.BorderLeft ?? 0),
-      y: (absolute.y ?? 0) + (shape?.BorderTop ?? 0),
-      width: (shape?.BorderRight ?? 0) - (shape?.BorderLeft ?? 0),
-      height: (shape?.BorderBottom ?? 0) - (shape?.BorderTop ?? 0),
-    };
-  }
-
-  if (shape?.UpperLeftCorner && shape?.Size) {
-    return {
-      x: shape.UpperLeftCorner.x ?? 0,
-      y: shape.UpperLeftCorner.y ?? 0,
-      width: shape.Size.width ?? 0,
-      height: shape.Size.height ?? 0,
-    };
-  }
-
-  const rect = shape?.BoundingMarginRectangle ?? shape?.BoundingRectangle;
-  if (!rect) {
+  const bounds = getObjectBounds(staffEntry);
+  if (!bounds) {
     return null;
   }
 
   return {
-    x: rect.x,
-    y: rect.y,
-    width: rect.width,
-    height: rect.height,
+    left: bounds.left,
+    right: bounds.right,
   };
 }
 
-function getSvgScale(svg: SVGSVGElement) {
-  const viewBox = svg.viewBox?.baseVal;
-  const widthUnits = viewBox?.width || svg.clientWidth || 1;
-  const heightUnits = viewBox?.height || svg.clientHeight || 1;
+function getObjectBounds(object: GraphicalObjectLike | null) {
+  const box = object?.PositionAndShape;
+  const absoluteX = box?.AbsolutePosition?.x;
+  const absoluteY = box?.AbsolutePosition?.y;
+  const leftBorder = box?.BorderLeft;
+  const rightBorder = box?.BorderRight;
+  const topBorder = box?.BorderTop;
+  const bottomBorder = box?.BorderBottom;
+
+  if (
+    typeof absoluteX !== "number"
+    || typeof absoluteY !== "number"
+    || typeof leftBorder !== "number"
+    || typeof rightBorder !== "number"
+    || typeof topBorder !== "number"
+    || typeof bottomBorder !== "number"
+  ) {
+    return null;
+  }
 
   return {
-    x: svg.clientWidth / widthUnits,
-    y: svg.clientHeight / heightUnits,
+    left: absoluteX + leftBorder,
+    right: absoluteX + rightBorder,
+    top: absoluteY + topBorder,
+    bottom: absoluteY + bottomBorder,
   };
+}
+
+function osmdRectToDomRect(
+  host: HTMLDivElement,
+  visibleSvg: SVGSVGElement,
+  pageBounds: { left: number; right: number; top: number; bottom: number },
+  rect: { left: number; right: number; top: number; bottom: number },
+  target: ScorePassageTarget,
+): HighlightRect {
+  const hostRect = host.getBoundingClientRect();
+  const svgRect = visibleSvg.getBoundingClientRect();
+  const pageWidth = Math.max(1, pageBounds.right - pageBounds.left);
+  const pageHeight = Math.max(1, pageBounds.bottom - pageBounds.top);
+  const scaleX = svgRect.width / pageWidth;
+  const scaleY = svgRect.height / pageHeight;
+
+  const left = svgRect.left - hostRect.left + host.scrollLeft + (rect.left - pageBounds.left) * scaleX;
+  const top = svgRect.top - hostRect.top + host.scrollTop + (rect.top - pageBounds.top) * scaleY;
+  const width = Math.max(18, (rect.right - rect.left) * scaleX);
+  const height = Math.max(36, (rect.bottom - rect.top) * scaleY);
+
+  return { left, top, width, height, target };
+}
+
+function distanceToBand(value: number, min: number, max: number) {
+  if (value < min) {
+    return min - value;
+  }
+  if (value > max) {
+    return value - max;
+  }
+  return 0;
+}
+
+function getFractionRealValue(value: FractionLike | null) {
+  if (!value) {
+    return null;
+  }
+
+  if (typeof value.RealValue === "number") {
+    return value.RealValue;
+  }
+
+  if (typeof value.realValue === "number") {
+    return value.realValue;
+  }
+
+  const wholeValue = typeof value.WholeValue === "number"
+    ? value.WholeValue
+    : typeof value.wholeValue === "number"
+      ? value.wholeValue
+      : 0;
+  const numerator = typeof value.Numerator === "number"
+    ? value.Numerator
+    : typeof value.numerator === "number"
+      ? value.numerator
+      : 0;
+  const denominator = typeof value.Denominator === "number"
+    ? value.Denominator
+    : typeof value.denominator === "number"
+      ? value.denominator
+      : 1;
+
+  if (!denominator) {
+    return wholeValue + numerator;
+  }
+
+  return wholeValue + numerator / denominator;
+}
+
+function sameTarget(left: ScorePassageTarget | null, right: ScorePassageTarget | null) {
+  if (!left || !right) {
+    return false;
+  }
+
+  const sameMeasure = left.measureNumber === right.measureNumber;
+  const sameIndex = left.staffEntryIndex === right.staffEntryIndex;
+  const sameTime = left.tMeasBeats == null || right.tMeasBeats == null
+    ? true
+    : Math.abs(left.tMeasBeats - right.tMeasBeats) < 0.0001;
+
+  return sameMeasure && sameIndex && sameTime;
 }
