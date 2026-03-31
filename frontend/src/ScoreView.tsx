@@ -57,6 +57,7 @@ type GraphicalMusicPageLike = GraphicalObjectLike & {
 type MusicSystemLike = GraphicalObjectLike & {
   Parent?: GraphicalMusicPageLike;
   StaffLines?: StaffLineLike[];
+  GraphicalMeasures?: GraphicalMeasureLike[][];
 };
 
 type GraphicalMeasureLike = GraphicalObjectLike & {
@@ -64,6 +65,8 @@ type GraphicalMeasureLike = GraphicalObjectLike & {
   staffEntries?: unknown[];
   ParentMusicSystem?: MusicSystemLike;
   ParentStaffLine?: StaffLineLike;
+  IsExtraGraphicalMeasure?: boolean;
+  isVisible?: () => boolean;
 };
 
 type StaffLineLike = GraphicalObjectLike & {
@@ -459,25 +462,26 @@ function resolveTargetRectFromSelection(
 }
 
 function getSystemMeasureRegions(system: MusicSystemLike) {
-  const staffLines = system.StaffLines ?? [];
   const grouped = new Map<number, RectBounds[]>();
 
-  staffLines.forEach((staffLine) => {
-    const measures = staffLine.Measures ?? [];
-    measures.forEach((measure) => {
-      if (typeof measure.MeasureNumber !== "number") {
-        return;
-      }
+  const systemMeasures = getGraphicalMeasuresForSystem(system);
+  systemMeasures.forEach((measure) => {
+    if (typeof measure.MeasureNumber !== "number" || measure.MeasureNumber < 0 || measure.IsExtraGraphicalMeasure) {
+      return;
+    }
 
-      const bounds = getObjectBounds(measure);
-      if (!bounds) {
-        return;
-      }
+    if (typeof measure.isVisible === "function" && !measure.isVisible()) {
+      return;
+    }
 
-      const current = grouped.get(measure.MeasureNumber) ?? [];
-      current.push(bounds);
-      grouped.set(measure.MeasureNumber, current);
-    });
+    const bounds = getObjectBounds(measure);
+    if (!bounds) {
+      return;
+    }
+
+    const current = grouped.get(measure.MeasureNumber) ?? [];
+    current.push(bounds);
+    grouped.set(measure.MeasureNumber, current);
   });
 
   return Array.from(grouped.entries())
@@ -499,6 +503,28 @@ function getSystemMeasureRegions(system: MusicSystemLike) {
     })
     .filter((region): region is MeasureRegion => Boolean(region))
     .sort((left, right) => left.measureNumber - right.measureNumber);
+}
+
+function getGraphicalMeasuresForSystem(system: MusicSystemLike) {
+  const fromGraphicalMeasures = (system.GraphicalMeasures ?? []).flat().filter(Boolean);
+  if (fromGraphicalMeasures.length > 0) {
+    return dedupeMeasures(fromGraphicalMeasures);
+  }
+
+  const staffLines = system.StaffLines ?? [];
+  const fromStaffLines = staffLines.flatMap((staffLine) => staffLine.Measures ?? []).filter(Boolean);
+  return dedupeMeasures(fromStaffLines);
+}
+
+function dedupeMeasures(measures: GraphicalMeasureLike[]) {
+  const seen = new Set<GraphicalMeasureLike>();
+  return measures.filter((measure) => {
+    if (seen.has(measure)) {
+      return false;
+    }
+    seen.add(measure);
+    return true;
+  });
 }
 
 function getObjectBounds(object: GraphicalObjectLike | null) {

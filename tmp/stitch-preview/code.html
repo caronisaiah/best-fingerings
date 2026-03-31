@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>The Composer’s Study - Piano Fingering Engine</title>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&amp;family=Public+Sans:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              "on-tertiary-container": "#b39777",
+              "primary-fixed": "#ffdad7",
+              "on-primary-fixed-variant": "#5f3e3c",
+              "secondary": "#77574d",
+              "inverse-primary": "#eabcb8",
+              "on-tertiary": "#ffffff",
+              "on-secondary-fixed": "#2c160e",
+              "on-secondary-fixed-variant": "#5d4037",
+              "error": "#ba1a1a",
+              "inverse-surface": "#31312b",
+              "primary-fixed-dim": "#eabcb8",
+              "on-tertiary-fixed-variant": "#584329",
+              "surface-container-highest": "#e5e2da",
+              "outline": "#827472",
+              "on-error": "#ffffff",
+              "tertiary-container": "#433017",
+              "tertiary": "#2b1b05",
+              "surface-variant": "#e5e2da",
+              "primary": "#321716",
+              "tertiary-fixed": "#fdddb9",
+              "primary-container": "#4a2c2a",
+              "on-error-container": "#93000a",
+              "background": "#fcf9f0",
+              "surface-container": "#f1eee5",
+              "on-surface-variant": "#504443",
+              "surface-tint": "#795553",
+              "on-secondary-container": "#795950",
+              "outline-variant": "#d4c3c1",
+              "surface": "#fcf9f0",
+              "secondary-fixed-dim": "#e7bdb1",
+              "secondary-container": "#fed3c7",
+              "on-background": "#1c1c17",
+              "surface-bright": "#fcf9f0",
+              "on-primary-fixed": "#2e1413",
+              "surface-container-high": "#ebe8df",
+              "inverse-on-surface": "#f4f1e8",
+              "on-primary-container": "#bd928f",
+              "on-tertiary-fixed": "#281803",
+              "surface-dim": "#dddad1",
+              "on-surface": "#1c1c17",
+              "on-primary": "#ffffff",
+              "error-container": "#ffdad6",
+              "secondary-fixed": "#ffdbd0",
+              "on-secondary": "#ffffff",
+              "surface-container-low": "#f6f3ea",
+              "surface-container-lowest": "#ffffff",
+              "tertiary-fixed-dim": "#e0c29f"
+            },
+            fontFamily: {
+              "headline": ["Newsreader"],
+              "body": ["Newsreader"],
+              "label": ["Public Sans"]
+            },
+            borderRadius: {"DEFAULT": "0.125rem", "lg": "0.25rem", "xl": "0.5rem", "full": "0.75rem"},
+          },
+        },
+      }
+    </script>
+<style>.material-symbols-outlined {
+    font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 24
+    }
+.wood-texture {
+    background-image: linear-gradient(rgba(50, 23, 22, 0.95), rgba(50, 23, 22, 0.95)), url(https://lh3.googleusercontent.com/aida-public/AB6AXuDFHRtCyaIeUlXuyXcLSUFddlofJuoTQRFdhTCFVn0K1gLqi3YJQVwK9t7BLvkSTXYiw1GtwT1Pa5BfpwdP3AhhKs1xJBnXnLI9JGLHoXUJcCR2jHseA3qXTg01LoOW1Oj0cxagC6cdCdAHFafCBSdsimk22-d_2Ri9mN2WblSs28FhAefLySV76zJq05HKXde-l2qs1djiLw3EK_Ki6e4tLiOkc6qnGhetAliHu9yYsDdMtVFOzkupHy2ydWx9gyIDk6CrEoVdbQuT);
+    background-blend-mode: multiply;
+    background-size: cover
+    }</style>
+</head>
+<body class="bg-background font-body text-on-surface min-h-screen selection:bg-secondary/30">
+<!-- TopNavBar -->
+<header class="fixed top-0 w-full z-50 flex justify-between items-center px-8 h-16 bg-[#321716] dark:bg-[#1c1c17] text-[#fcf9f0] shadow-2xl font-['Newsreader'] tracking-tight">
+<div class="flex items-center gap-8">
+<span class="text-2xl font-semibold text-[#fcf9f0] italic">The Composer’s Study</span>
+<nav class="hidden md:flex items-center gap-6">
+<a class="text-[#5f3e3c] hover:text-[#fcf9f0] transition-colors transition-all duration-300 ease-in-out" href="#">Score</a>
+<a class="text-[#ffffff] border-b-2 border-[#77574d] pb-1 transition-all duration-300 ease-in-out" href="#">Generate</a>
+<a class="text-[#5f3e3c] hover:text-[#fcf9f0] transition-colors transition-all duration-300 ease-in-out" href="#">Inspect</a>
+</nav>
+</div>
+<div class="flex items-center gap-4">
+<button class="p-2 hover:bg-white/10 rounded-full transition-all">
+<span class="material-symbols-outlined" data-icon="settings">settings</span>
+</button>
+<button class="p-2 hover:bg-white/10 rounded-full transition-all">
+<span class="material-symbols-outlined" data-icon="account_circle">account_circle</span>
+</button>
+</div>
+</header>
+<!-- Sidebar Wrapper -->
+<aside class="fixed left-0 top-0 h-full w-64 wood-texture z-40 flex flex-col py-8 pt-24 shadow-[4px_0_24px_rgba(0,0,0,0.3)]">
+<div class="px-6 mb-8">
+<h2 class="text-[#ffffff] font-['Newsreader'] text-xl">Manuscript</h2>
+<p class="font-['Public_Sans'] uppercase tracking-[0.05em] text-[10px] text-[#5f3e3c]">Piano Fingering Engine</p>
+</div>
+<nav class="flex-1 px-4 space-y-1">
+<a class="flex items-center gap-3 px-3 py-2 text-[#ffffff] bg-[#fcf9f0]/10 rounded-sm font-['Public_Sans'] uppercase tracking-[0.05em] text-[10px] transition-all active:scale-[0.98]" href="#">
+<span class="material-symbols-outlined text-sm" data-icon="terminal">terminal</span>
+<span>Algorithm</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-[#5f3e3c] hover:text-[#fcf9f0] hover:bg-white/5 rounded-sm font-['Public_Sans'] uppercase tracking-[0.05em] text-[10px] transition-all active:scale-[0.98]" href="#">
+<span class="material-symbols-outlined text-sm" data-icon="folder_open">folder_open</span>
+<span>Projects</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-[#5f3e3c] hover:text-[#fcf9f0] hover:bg-white/5 rounded-sm font-['Public_Sans'] uppercase tracking-[0.05em] text-[10px] transition-all active:scale-[0.98]" href="#">
+<span class="material-symbols-outlined text-sm" data-icon="auto_stories">auto_stories</span>
+<span>Library</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-[#5f3e3c] hover:text-[#fcf9f0] hover:bg-white/5 rounded-sm font-['Public_Sans'] uppercase tracking-[0.05em] text-[10px] transition-all active:scale-[0.98]" href="#">
+<span class="material-symbols-outlined text-sm" data-icon="history">history</span>
+<span>History</span>
+</a>
+</nav>
+<div class="px-6 mt-8 space-y-6">
+<div class="space-y-4">
+<div class="space-y-1">
+<label class="font-['Public_Sans'] uppercase tracking-[0.05em] text-[9px] text-[#5f3e3c]">Style Bias</label>
+<div class="h-1 w-full bg-[#fcf9f0]/10 rounded-full overflow-hidden">
+<div class="h-full w-2/3 bg-secondary"></div>
+</div>
+<div class="flex justify-between text-[8px] text-[#5f3e3c] font-label uppercase">
+<span>Strict</span>
+<span>Fluid</span>
+</div>
+</div>
+<div class="space-y-1">
+<label class="font-['Public_Sans'] uppercase tracking-[0.05em] text-[9px] text-[#5f3e3c]">Hand Size</label>
+<select class="w-full bg-transparent border-b border-[#5f3e3c]/40 text-[#fcf9f0] text-[10px] font-label uppercase focus:border-secondary outline-none py-1">
+<option class="bg-primary">Medium (Octave + 1)</option>
+<option class="bg-primary">Large (Octave + 3)</option>
+<option class="bg-primary">Small (Octave)</option>
+</select>
+</div>
+</div>
+</div>
+<div class="px-4 mt-auto space-y-1">
+<a class="flex items-center gap-3 px-3 py-2 text-[#5f3e3c] hover:text-[#fcf9f0] hover:bg-white/5 font-['Public_Sans'] uppercase tracking-[0.05em] text-[10px]" href="#">
+<span class="material-symbols-outlined text-sm" data-icon="help_outline">help_outline</span>
+<span>Help</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-[#5f3e3c] hover:text-[#fcf9f0] hover:bg-white/5 font-['Public_Sans'] uppercase tracking-[0.05em] text-[10px]" href="#">
+<span class="material-symbols-outlined text-sm" data-icon="inventory_2">inventory_2</span>
+<span>Archive</span>
+</a>
+</div>
+</aside>
+<!-- Main Workspace -->
+<main class="ml-64 pt-16 min-h-screen flex flex-col">
+<div class="flex-1 p-12 bg-surface flex flex-col items-center justify-start overflow-y-auto">
+<!-- Page Header Overlap Aesthetic -->
+<div class="w-full max-w-5xl mb-12 -mt-4 relative z-10">
+<div class="flex items-baseline justify-between">
+<h1 class="text-5xl font-headline tracking-tight text-on-surface">Nocturne No. 2 in E♭ Major</h1>
+<div class="flex gap-4">
+<button class="bg-primary text-on-primary px-6 py-2 text-[11px] font-label uppercase tracking-widest flex items-center gap-2 hover:bg-primary/90 transition-colors">
+<span class="material-symbols-outlined text-sm" data-icon="auto_fix">auto_fix</span>
+                            Recalculate Fingering
+                        </button>
+<button class="bg-surface-container-highest text-primary px-6 py-2 text-[11px] font-label uppercase tracking-widest hover:bg-surface-container-high transition-colors">
+                            Export PDF
+                        </button>
+</div>
+</div>
+<p class="text-secondary font-headline italic text-lg mt-2">Frédéric Chopin, Op. 9, No. 2</p>
+</div>
+<!-- Score Area (Parchment) -->
+<div class="w-full max-w-5xl aspect-[1/1.41] bg-surface-container-lowest shadow-2xl relative p-16 flex flex-col gap-12 group">
+<!-- Background texture simulation via subtle gradient -->
+<div class="absolute inset-0 opacity-20 pointer-events-none" style="background-image: radial-gradient(#d4c3c1 0.5px, transparent 0.5px); background-size: 20px 20px;"></div>
+<!-- Score Content (Mockup) -->
+<div class="relative z-10 flex flex-col gap-16 opacity-90">
+<!-- Staff 1 -->
+<div class="w-full h-32 border-y border-outline-variant/30 relative">
+<div class="absolute inset-y-0 left-0 w-12 flex flex-col justify-center items-center text-4xl font-serif">
+<span>∮</span>
+</div>
+<div class="absolute left-20 top-8 flex gap-12 items-end">
+<!-- Musical Notation Placeholder -->
+<div class="flex flex-col items-center gap-1">
+<span class="text-[10px] font-label font-bold text-secondary">2</span>
+<div class="w-3 h-3 rounded-full bg-on-background"></div>
+<div class="w-0.5 h-12 bg-on-background -mt-1.5 ml-3"></div>
+</div>
+<div class="flex flex-col items-center gap-1">
+<span class="text-[10px] font-label font-bold text-secondary">1</span>
+<div class="w-3 h-3 rounded-full bg-on-background"></div>
+<div class="w-0.5 h-12 bg-on-background -mt-1.5 ml-3"></div>
+</div>
+<div class="flex flex-col items-center gap-1 translate-y-2">
+<span class="text-[10px] font-label font-bold text-secondary">5</span>
+<div class="w-3 h-3 rounded-full bg-on-background"></div>
+<div class="w-0.5 h-12 bg-on-background -mt-1.5 ml-3"></div>
+</div>
+<div class="flex flex-col items-center gap-1 -translate-y-2">
+<span class="text-[10px] font-label font-bold text-secondary">3</span>
+<div class="w-3 h-3 rounded-full bg-on-background"></div>
+<div class="w-0.5 h-14 bg-on-background -mt-1.5 ml-3"></div>
+</div>
+</div>
+<!-- Staff Lines -->
+<div class="absolute inset-0 flex flex-col justify-between py-1 opacity-20">
+<div class="h-px bg-on-background"></div>
+<div class="h-px bg-on-background"></div>
+<div class="h-px bg-on-background"></div>
+<div class="h-px bg-on-background"></div>
+<div class="h-px bg-on-background"></div>
+</div>
+</div>
+<!-- Staff 2 (Bass) -->
+<div class="w-full h-32 border-y border-outline-variant/30 relative">
+<div class="absolute inset-y-0 left-0 w-12 flex flex-col justify-center items-center text-3xl font-serif">
+<span>?</span>
+</div>
+<!-- Staff Lines -->
+<div class="absolute inset-0 flex flex-col justify-between py-1 opacity-20">
+<div class="h-px bg-on-background"></div>
+<div class="h-px bg-on-background"></div>
+<div class="h-px bg-on-background"></div>
+<div class="h-px bg-on-background"></div>
+<div class="h-px bg-on-background"></div>
+</div>
+<div class="absolute left-20 top-12 flex gap-8 items-start">
+<div class="flex flex-col items-center gap-1">
+<div class="w-0.5 h-10 bg-on-background mb-[-10px] mr-3"></div>
+<div class="w-3 h-3 rounded-full bg-on-background"></div>
+<span class="text-[10px] font-label font-bold text-secondary">5</span>
+</div>
+<div class="flex flex-col items-center gap-1">
+<div class="w-0.5 h-10 bg-on-background mb-[-10px] mr-3"></div>
+<div class="w-3 h-3 rounded-full bg-on-background"></div>
+<span class="text-[10px] font-label font-bold text-secondary">2</span>
+</div>
+</div>
+</div>
+<!-- Visual Separator -->
+<div class="h-24"></div>
+<!-- Repeat Staff 1 -->
+<div class="w-full h-32 border-y border-outline-variant/30 relative">
+<div class="absolute inset-0 flex flex-col justify-between py-1 opacity-20">
+<div class="h-px bg-on-background"></div>
+<div class="h-px bg-on-background"></div>
+<div class="h-px bg-on-background"></div>
+<div class="h-px bg-on-background"></div>
+<div class="h-px bg-on-background"></div>
+</div>
+</div>
+</div>
+<!-- Footer Page Marker -->
+<div class="mt-auto flex justify-between items-center text-[10px] font-label uppercase tracking-widest text-outline">
+<span>Sheet 01 / 04</span>
+<span class="italic">The Composer’s Study Archive</span>
+<span>Computed Rev. 2.4</span>
+</div>
+</div>
+<!-- Contextual Controls Floating Panel (Asymmetric) -->
+<div class="fixed bottom-12 right-12 w-80 bg-surface-container-highest/90 backdrop-blur-md p-6 shadow-xl border-l-4 border-secondary">
+<div class="flex flex-col gap-6">
+<div class="flex justify-between items-center">
+<h3 class="font-headline text-lg font-bold">Selection Insight</h3>
+<span class="material-symbols-outlined text-secondary" data-icon="lightbulb">lightbulb</span>
+</div>
+<div class="space-y-4">
+<div class="bg-surface p-3 rounded-sm">
+<p class="text-[11px] font-label uppercase text-secondary mb-1">Current Suggestion</p>
+<p class="text-sm">Use 2nd finger for the E♭ to facilitate the reach to the G-octave shift.</p>
+</div>
+<div class="grid grid-cols-2 gap-2">
+<button class="bg-primary text-on-primary py-2 text-[10px] font-label uppercase">Accept</button>
+<button class="bg-surface-container-high text-primary py-2 text-[10px] font-label uppercase">Ignore</button>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Tooltip / Keyboard Shortcut Legend -->
+<footer class="h-10 bg-surface-container-low border-t border-outline-variant/10 px-8 flex items-center justify-between text-[10px] font-label uppercase tracking-wider text-on-surface-variant">
+<div class="flex gap-8">
+<span><kbd class="bg-surface-container-high px-1 rounded">SPACE</kbd> Playback</span>
+<span><kbd class="bg-surface-container-high px-1 rounded">1-5</kbd> Manual Override</span>
+<span><kbd class="bg-surface-container-high px-1 rounded">CMD+Z</kbd> Undo Edit</span>
+</div>
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-green-500"></span>
+<span>Engine Connected</span>
+</div>
+</footer>
+</main>
+<!-- Decorative Element: Ink Blot -->
+<div class="fixed bottom-0 left-64 opacity-5 pointer-events-none select-none">
+<img alt="" class="w-96 grayscale" data-alt="abstract organic ink wash texture with soft feathered edges on parchment background simulating artistic splatter" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAfptVl_6Hop6VzXga9IWtMTg_NJNROKV_8gP9Zqy_kt1PHyttwT2lSU3Nba72dYS5xqY33Wf7yFzQ0hMMzJbgTw5kNsI61T52gx4_Qx3gQrrWSjNyZQlZROe3-ZXQPmimG5yO5qj9NF5BzjBkpAt8RXFcvebmX2QwiNPhbX9VTsWICCXO0yrw87Gp8xEYYwhQFz3YK5wmX5B-irnTKpjvO-qYqdjitZ9O8MsLIMdTxPmyjlNznBH28dJ8iIMqbiTClpWmMYlO3Dvfp"/>
+</div>
+</body></html>

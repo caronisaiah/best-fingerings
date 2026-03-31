@@ -65,18 +65,26 @@ export function PianoKeyboard({ activeNotes, selectedPitchMidi }: PianoKeyboardP
   const totalWidth = whiteCount * WHITE_KEY_WIDTH;
 
   const activeByMidi = useMemo(() => {
-    const map = new Map<number, PianoKeyboardActiveNote>();
+    const map = new Map<number, PianoKeyboardActiveNote[]>();
     activeNotes.forEach((note) => {
-      const existing = map.get(note.pitchMidi);
-      if (!existing) {
-        map.set(note.pitchMidi, note);
-        return;
-      }
-
-      if (note.selected || (!existing.selected && note.locked && !existing.locked)) {
-        map.set(note.pitchMidi, note);
-      }
+      const existing = map.get(note.pitchMidi) ?? [];
+      existing.push(note);
+      map.set(note.pitchMidi, existing);
     });
+
+    map.forEach((notes, midi) => {
+      notes.sort((left, right) => {
+        if (left.selected !== right.selected) {
+          return left.selected ? -1 : 1;
+        }
+        if (left.hand !== right.hand) {
+          return left.hand === "RH" ? -1 : 1;
+        }
+        return (left.finger ?? 0) - (right.finger ?? 0);
+      });
+      map.set(midi, notes);
+    });
+
     return map;
   }, [activeNotes]);
 
@@ -127,7 +135,10 @@ export function PianoKeyboard({ activeNotes, selectedPitchMidi }: PianoKeyboardP
           {keys
             .filter((key) => key.isWhite)
             .map((key) => {
-              const active = activeByMidi.get(key.midi);
+              const notes = activeByMidi.get(key.midi) ?? [];
+              const active = notes[0];
+              const hasRh = notes.some((note) => note.hand === "RH");
+              const hasLh = notes.some((note) => note.hand === "LH");
               return (
                 <div
                   key={key.midi}
@@ -135,17 +146,22 @@ export function PianoKeyboard({ activeNotes, selectedPitchMidi }: PianoKeyboardP
                   className={[
                     "pianoKey",
                     "pianoKey-white",
-                    active ? `pianoKey-${active.hand.toLowerCase()}` : "",
+                    hasRh && hasLh ? "pianoKey-both" : "",
+                    active && !(hasRh && hasLh) ? `pianoKey-${active.hand.toLowerCase()}` : "",
                     active?.selected ? "pianoKey-selected" : "",
                   ]
                     .filter(Boolean)
                     .join(" ")}
                   style={{ left: key.left, width: WHITE_KEY_WIDTH }}
                 >
-                  {active ? (
-                    <div className={`pianoKeyLabel pianoKeyLabel-${active.hand.toLowerCase()}`}>
-                      <span>{active.finger ?? ""}</span>
-                      {active.locked ? <span className="pianoKeyLock">L</span> : null}
+                  {notes.length > 0 ? (
+                    <div className="pianoKeyLabels">
+                      {notes.map((note) => (
+                        <div key={note.noteId} className={`pianoKeyLabel pianoKeyLabel-${note.hand.toLowerCase()}`}>
+                          <span>{note.finger ?? ""}</span>
+                          {note.locked ? <span className="pianoKeyLock">L</span> : null}
+                        </div>
+                      ))}
                     </div>
                   ) : null}
                 </div>
@@ -155,7 +171,10 @@ export function PianoKeyboard({ activeNotes, selectedPitchMidi }: PianoKeyboardP
           {keys
             .filter((key) => !key.isWhite)
             .map((key) => {
-              const active = activeByMidi.get(key.midi);
+              const notes = activeByMidi.get(key.midi) ?? [];
+              const active = notes[0];
+              const hasRh = notes.some((note) => note.hand === "RH");
+              const hasLh = notes.some((note) => note.hand === "LH");
               return (
                 <div
                   key={key.midi}
@@ -163,16 +182,25 @@ export function PianoKeyboard({ activeNotes, selectedPitchMidi }: PianoKeyboardP
                   className={[
                     "pianoKey",
                     "pianoKey-black",
-                    active ? `pianoKey-${active.hand.toLowerCase()}` : "",
+                    hasRh && hasLh ? "pianoKey-both" : "",
+                    active && !(hasRh && hasLh) ? `pianoKey-${active.hand.toLowerCase()}` : "",
                     active?.selected ? "pianoKey-selected" : "",
                   ]
                     .filter(Boolean)
                     .join(" ")}
                   style={{ left: key.left }}
                 >
-                  {active ? (
-                    <div className={`pianoKeyLabel pianoKeyLabel-black pianoKeyLabel-${active.hand.toLowerCase()}`}>
-                      <span>{active.finger ?? ""}</span>
+                  {notes.length > 0 ? (
+                    <div className="pianoKeyLabels pianoKeyLabels-black">
+                      {notes.map((note) => (
+                        <div
+                          key={note.noteId}
+                          className={`pianoKeyLabel pianoKeyLabel-black pianoKeyLabel-${note.hand.toLowerCase()}`}
+                        >
+                          <span>{note.finger ?? ""}</span>
+                          {note.locked ? <span className="pianoKeyLock">L</span> : null}
+                        </div>
+                      ))}
                     </div>
                   ) : null}
                 </div>

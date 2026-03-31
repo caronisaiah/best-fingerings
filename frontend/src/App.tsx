@@ -5,7 +5,7 @@ import { getJob, getResult, getResultByKey, postFingerings } from "./api";
 import {
   applyManualEdits,
   flattenFingeringItems,
-  getKeyboardPreviewNotesForMeasure,
+  getKeyboardPreviewChunksForMeasure,
   getDisplayedFinger,
   type NoteEditorItem,
   validateFingerEdit,
@@ -92,6 +92,8 @@ export default function App() {
   const [selectedMeasureNumber, setSelectedMeasureNumber] = useState<number | null>(null);
   const [hoveredTarget, setHoveredTarget] = useState<ScorePassageTarget | null>(null);
   const [keyboardTrayOpen, setKeyboardTrayOpen] = useState(false);
+  const [selectedChunkIndex, setSelectedChunkIndex] = useState(0);
+  const [keyboardPlaying, setKeyboardPlaying] = useState(false);
 
   const [zoom, setZoom] = useState(1.0);
   const [pageIndex, setPageIndex] = useState(0);
@@ -121,8 +123,8 @@ export default function App() {
     () => (selectedItem ? getDisplayedFinger(serverPayload, selectedItem.noteId) : null),
     [serverPayload, selectedItem],
   );
-  const measureKeyboardPreviewNotes = useMemo(
-    () => getKeyboardPreviewNotesForMeasure(
+  const measureKeyboardChunks = useMemo(
+    () => getKeyboardPreviewChunksForMeasure(
       displayPayload,
       selectedMeasureNumber,
       lockedNoteFingerings,
@@ -130,6 +132,11 @@ export default function App() {
     ),
     [displayPayload, lockedNoteFingerings, selectedMeasureNumber, selectedNoteId],
   );
+  const activeChunkIndex = measureKeyboardChunks.length > 0
+    ? Math.max(0, Math.min(selectedChunkIndex, measureKeyboardChunks.length - 1))
+    : 0;
+  const selectedKeyboardChunk = measureKeyboardChunks[activeChunkIndex] ?? null;
+  const keyboardPreviewNotes = selectedKeyboardChunk?.notes ?? [];
 
   const warnings = useMemo(() => {
     const analysisWarnings: string[] = displayPayload?.analysis?.warnings ?? [];
@@ -197,6 +204,63 @@ export default function App() {
       setSelectedMeasureNumber(null);
     }
   }, [editorItems, selectedMeasureNumber]);
+
+  useEffect(() => {
+    setSelectedChunkIndex(0);
+    setKeyboardPlaying(false);
+  }, [selectedMeasureNumber]);
+
+  useEffect(() => {
+    if (measureKeyboardChunks.length === 0) {
+      setKeyboardPlaying(false);
+      if (selectedChunkIndex !== 0) {
+        setSelectedChunkIndex(0);
+      }
+      return;
+    }
+
+    if (selectedChunkIndex >= measureKeyboardChunks.length) {
+      setSelectedChunkIndex(0);
+      setKeyboardPlaying(false);
+    }
+  }, [measureKeyboardChunks.length, selectedChunkIndex]);
+
+  useEffect(() => {
+    if (!keyboardTrayOpen && keyboardPlaying) {
+      setKeyboardPlaying(false);
+    }
+  }, [keyboardPlaying, keyboardTrayOpen]);
+
+  useEffect(() => {
+    if (!selectedKeyboardChunk) {
+      return;
+    }
+
+    if (selectedKeyboardChunk.noteIds.includes(selectedNoteId ?? "")) {
+      return;
+    }
+
+    if (selectedKeyboardChunk.primaryNoteId) {
+      setSelectedNoteId(selectedKeyboardChunk.primaryNoteId);
+    }
+  }, [selectedKeyboardChunk, selectedNoteId]);
+
+  useEffect(() => {
+    if (!keyboardPlaying) {
+      return;
+    }
+
+    if (measureKeyboardChunks.length <= 1 || activeChunkIndex >= measureKeyboardChunks.length - 1) {
+      setKeyboardPlaying(false);
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setSelectedChunkIndex((current) => Math.min(current + 1, measureKeyboardChunks.length - 1));
+    }, 900);
+
+    return () => window.clearTimeout(timer);
+  }, [activeChunkIndex, keyboardPlaying, measureKeyboardChunks.length]);
 
   useEffect(() => {
     let cancelled = false;
@@ -320,6 +384,8 @@ export default function App() {
     setSelectedMeasureNumber(null);
     setHoveredTarget(null);
     setKeyboardTrayOpen(false);
+    setSelectedChunkIndex(0);
+    setKeyboardPlaying(false);
     setErr(null);
   }
 
@@ -393,11 +459,42 @@ export default function App() {
     }
 
     setSelectedMeasureNumber(nextMeasureNumber);
+    setKeyboardTrayOpen(true);
+    setKeyboardPlaying(false);
+    setSelectedChunkIndex(0);
 
     if (!selectedItem || selectedItem.measure !== nextMeasureNumber) {
       const firstMeasureItem = editorItems.find((item) => item.measure === nextMeasureNumber) ?? null;
       setSelectedNoteId(firstMeasureItem?.noteId ?? null);
     }
+  }
+
+  function stepKeyboardChunk(delta: number) {
+    if (measureKeyboardChunks.length === 0) {
+      return;
+    }
+
+    setKeyboardPlaying(false);
+    setSelectedChunkIndex((current) => Math.max(0, Math.min(current + delta, measureKeyboardChunks.length - 1)));
+  }
+
+  function toggleKeyboardPlayback() {
+    if (measureKeyboardChunks.length <= 1) {
+      return;
+    }
+
+    setKeyboardTrayOpen(true);
+    setKeyboardPlaying((current) => {
+      if (current) {
+        return false;
+      }
+
+      if (activeChunkIndex >= measureKeyboardChunks.length - 1) {
+        setSelectedChunkIndex(0);
+      }
+
+      return true;
+    });
   }
 
   const canRun = status !== "uploading" && status !== "queued" && status !== "running";
@@ -406,7 +503,11 @@ export default function App() {
   const scoreName = file ? file.name.replace(/\.(xml|musicxml|mxl)$/i, "") : "No score loaded";
   const composerLabel = file ? "Imported MusicXML score" : "Upload MusicXML or MXL to begin";
   const selectedMeasureLabel = selectedMeasureNumber != null ? `Measure ${selectedMeasureNumber}` : "Choose a measure";
-  const selectedMeasureNoteCount = measureKeyboardPreviewNotes.length;
+  const selectedChunkCount = measureKeyboardChunks.length;
+  const selectedChunkNoteCount = keyboardPreviewNotes.length;
+  const selectedMeasureNoteCount = selectedKeyboardChunk
+    ? `${selectedKeyboardChunk.beatLabel} / ${selectedChunkNoteCount}`
+    : String(selectedChunkNoteCount);
   const hoveredMeasureNumber = hoveredTarget?.measureNumber ?? null;
   const hoveredPreviewLabel = hoveredMeasureNumber != null ? `Measure ${hoveredMeasureNumber}` : null;
   const hasScorePreview = Boolean(deferredAnnotatedXml);
@@ -419,15 +520,9 @@ export default function App() {
             <div className="brandMark">BF</div>
             <div>
               <div className="brandName">Best Fingerings</div>
-              <div className="brandTag">Professional piano fingering workspace</div>
+              <div className="brandTag">The Composer&apos;s Study</div>
             </div>
           </div>
-
-          <nav className="topNav" aria-label="Workspace sections">
-            <button type="button" className="topNavItem topNavItem-active">Score</button>
-            <button type="button" className="topNavItem">Generate</button>
-            <button type="button" className="topNavItem">Inspect</button>
-          </nav>
         </div>
 
         <div className="topbarActions">
@@ -529,7 +624,7 @@ export default function App() {
         <main className="scoreStage">
           <section className="scoreHero">
             <div className="heroText">
-              <div className="heroEyebrow">Notation Workspace</div>
+              <div className="heroEyebrow">Digital Manuscript Workspace</div>
               <h1>{scoreName}</h1>
               <p>
                 Generate deterministic fingerings, inspect them on the score, then lock and refine noteheads before the
@@ -679,40 +774,77 @@ export default function App() {
 
               <div className={`keyboardDock keyboardDock-fixed ${keyboardTrayOpen ? "keyboardDock-open" : "keyboardDock-closed"}`}>
                 <div className="keyboardDockHeader">
-                  <div>
+                  <div className="keyboardDockIntro">
                     <div className="keyboardDockTitle">Keyboard Measure Preview</div>
                     <div className="keyboardDockMeta">
-                      {selectedMeasureNumber != null
+                      {selectedMeasureNumber != null && selectedKeyboardChunk
                         ? `${selectedMeasureLabel} • ${selectedMeasureNoteCount} noteheads mapped below`
                         : "Hover the score, then click a measure to pin its fingerings on the keyboard."}
                     </div>
                   </div>
+                  {selectedKeyboardChunk ? (
+                    <div className="keyboardTransport">
+                      <div className="keyboardTransportMeta">
+                        <strong>{selectedKeyboardChunk.label}</strong>
+                        <span>{activeChunkIndex + 1}/{selectedChunkCount}</span>
+                      </div>
+                      <div className="keyboardTransportButtons">
+                        <button
+                          type="button"
+                          className="toolbarGhostBtn keyboardTransportBtn"
+                          onClick={() => stepKeyboardChunk(-1)}
+                          disabled={activeChunkIndex <= 0}
+                        >
+                          Prev
+                        </button>
+                        <button
+                          type="button"
+                          className="toolbarGhostBtn keyboardTransportBtn keyboardTransportBtn-primary"
+                          onClick={toggleKeyboardPlayback}
+                          disabled={selectedChunkCount <= 1}
+                        >
+                          {keyboardPlaying ? "Pause" : "Play"}
+                        </button>
+                        <button
+                          type="button"
+                          className="toolbarGhostBtn keyboardTransportBtn"
+                          onClick={() => stepKeyboardChunk(1)}
+                          disabled={activeChunkIndex >= selectedChunkCount - 1}
+                        >
+                          Next
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
                   <div className="keyboardTrayActions">
                     {hoveredPreviewLabel && hoveredPreviewLabel !== selectedMeasureLabel ? (
                       <div className="keyboardDockHint">Hovering {hoveredPreviewLabel}</div>
                     ) : (
-                      <div className="keyboardDockHint">Tray stays visible while you scroll the score</div>
+                      <div className="keyboardDockHint">Click a measure once, then step or play through the bar</div>
                     )}
                     <button
                       type="button"
                       className="toolbarGhostBtn keyboardTrayCloseBtn"
-                      onClick={() => setKeyboardTrayOpen(false)}
+                      onClick={() => {
+                        setKeyboardPlaying(false);
+                        setKeyboardTrayOpen(false);
+                      }}
                     >
                       Hide Keyboard
                     </button>
                   </div>
                 </div>
 
-                {measureKeyboardPreviewNotes.length > 0 ? (
+                {keyboardPreviewNotes.length > 0 ? (
                   <PianoKeyboard
-                    activeNotes={measureKeyboardPreviewNotes}
-                    selectedPitchMidi={selectedItem && selectedItem.measure === selectedMeasureNumber
+                    activeNotes={keyboardPreviewNotes}
+                    selectedPitchMidi={selectedItem && selectedKeyboardChunk?.noteIds.includes(selectedItem.noteId)
                       ? selectedItem.pitchMidi
                       : null}
                   />
                 ) : (
                   <div className="keyboardDockEmpty">
-                    Click a visible measure on the page to project that bar's generated fingerings onto the keyboard.
+                    Click a visible measure on the page to load its first keyboard chunk, then step or play through the bar.
                   </div>
                 )}
               </div>
