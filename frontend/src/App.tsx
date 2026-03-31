@@ -2,6 +2,7 @@ import { Suspense, lazy, startTransition, useDeferredValue, useEffect, useMemo, 
 import "./App.css";
 
 import { getJob, getResult, getResultByKey, postFingerings } from "./api";
+import brandPortrait from "../assets/Metner_N.K._Postcard-1910.jpg";
 import {
   applyManualEdits,
   flattenFingeringItems,
@@ -514,13 +515,15 @@ export default function App() {
 
   return (
     <div className="appShell">
-      <header className="topbar">
-        <div className="topbarBrand">
-          <div className="brandLockup">
-            <div className="brandMark">BF</div>
-            <div>
-              <div className="brandName">Best Fingerings</div>
-              <div className="brandTag">The Composer&apos;s Study</div>
+        <header className="topbar">
+          <div className="topbarBrand">
+            <div className="brandLockup">
+              <div className="brandMark brandMark-portrait">
+                <img className="brandPortrait" src={brandPortrait} alt="Portrait mark for Best Fingerings" />
+              </div>
+              <div>
+                <div className="brandName">Best Fingerings</div>
+                <div className="brandTag">The Composer&apos;s Study</div>
             </div>
           </div>
         </div>
