@@ -3,6 +3,8 @@
 import type { ResultPayload } from "./types";
 
 export const API_BASE: string = import.meta.env.VITE_API_BASE ?? "/api";
+export const FINGERINGS_MODE: "sync" | "async" =
+  import.meta.env.VITE_FINGERINGS_MODE === "async" ? "async" : "sync";
 
 /**
  * Backend can return:
@@ -50,11 +52,27 @@ export type JobStatus = {
 };
 
 async function mustJson(r: Response) {
-  if (!r.ok) throw new Error(await r.text());
+  if (!r.ok) throw new Error(await responseErrorMessage(r));
   return r.json();
 }
 
-export async function postFingerings(args: {
+async function responseErrorMessage(r: Response) {
+  const raw = await r.text();
+  try {
+    const parsed = JSON.parse(raw) as { detail?: unknown };
+    if (typeof parsed.detail === "string") {
+      return parsed.detail;
+    }
+    if (parsed.detail && typeof parsed.detail === "object" && "error" in parsed.detail) {
+      return String((parsed.detail as { error?: unknown }).error);
+    }
+  } catch {
+    // Fall through to raw text.
+  }
+  return raw || `Request failed with ${r.status}`;
+}
+
+export type FingeringsRequest = {
   file: File;
   difficulty?: string;
   style_bias?: string;
@@ -63,7 +81,9 @@ export async function postFingerings(args: {
   locked_note_fingerings?: Record<string, number>;
   force_recompute?: boolean;
   presign_expires_seconds?: number;
-}): Promise<FingeringsResponse> {
+};
+
+function buildFingeringsFormData(args: FingeringsRequest) {
   const {
     file,
     difficulty = "standard",
@@ -84,13 +104,27 @@ export async function postFingerings(args: {
   fd.append("locked_note_fingerings_json", JSON.stringify(locked_note_fingerings));
   fd.append("force_recompute", String(force_recompute));
   fd.append("presign_expires_seconds", String(presign_expires_seconds));
+  return fd;
+}
 
+export async function postFingerings(args: FingeringsRequest): Promise<FingeringsResponse> {
+  const fd = buildFingeringsFormData(args);
   const r = await fetch(`${API_BASE}/fingerings`, {
     method: "POST",
     body: fd,
   });
 
   return (await mustJson(r)) as FingeringsResponse;
+}
+
+export async function postFingeringsSync(args: FingeringsRequest): Promise<ResultPayload> {
+  const fd = buildFingeringsFormData(args);
+  const r = await fetch(`${API_BASE}/fingerings/sync`, {
+    method: "POST",
+    body: fd,
+  });
+
+  return (await mustJson(r)) as ResultPayload;
 }
 
 export async function getJob(jobId: string): Promise<JobStatus> {

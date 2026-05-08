@@ -1,14 +1,12 @@
 from fastapi import APIRouter
 
-from app.api.results import router as results_router
 from app.api.analyze import router as analyze_router
+from app.api.fingerings import RESULT_SCHEMA_VERSION
 from app.api.fingerings import router as fingerings_router
 from app.api.jobs import router as jobs_router
-
-# ✅ versions
+from app.api.results import router as results_router
 from app.services.fingering_engine import ALGO_VERSION
-from app.services.musicxml_parser import PARSER_VERSION, ANCHOR_SCHEMA_VERSION
-from app.api.fingerings import RESULT_SCHEMA_VERSION  # make sure it's exported
+from app.services.musicxml_parser import ANCHOR_SCHEMA_VERSION, PARSER_VERSION
 
 router = APIRouter()
 
@@ -21,7 +19,7 @@ def health():
 @router.get("/version")
 def version():
     return {
-        "api_version": "0.0.1",  # bump when you change API behavior
+        "api_version": "0.0.1",
         "algorithm_version": ALGO_VERSION,
         "parser_version": PARSER_VERSION,
         "anchor_schema_version": ANCHOR_SCHEMA_VERSION,

@@ -1,7 +1,7 @@
 import { Suspense, lazy, startTransition, useDeferredValue, useEffect, useMemo, useState } from "react";
 import "./App.css";
 
-import { getJob, getResult, getResultByKey, postFingerings } from "./api";
+import { FINGERINGS_MODE, getJob, getResult, getResultByKey, postFingerings, postFingeringsSync } from "./api";
 import brandPortrait from "../assets/Metner_N.K._Postcard-1910.jpg";
 import {
   applyManualEdits,
@@ -70,7 +70,7 @@ function humanStatus(status: Status) {
   }
 }
 
-export default function App() {
+function WorkspaceApp() {
   const [file, setFile] = useState<File | null>(null);
   const [difficulty, setDifficulty] = useState("standard");
   const [styleBias, setStyleBias] = useState("neutral");
@@ -328,7 +328,7 @@ export default function App() {
     try {
       setStatus("uploading");
 
-      const start = await postFingerings({
+      const request = {
         file,
         difficulty,
         style_bias: styleBias,
@@ -336,27 +336,36 @@ export default function App() {
         articulation_bias: articulationBias,
         locked_note_fingerings: lockedNoteFingerings,
         force_recompute: forceRecompute,
-      });
+      };
 
       let finalPayload: ResultPayload | null = null;
 
-      if (start.status === "QUEUED") {
-        setJobId(start.job_id);
-        const ok = await poll(start.job_id);
-        if (!ok) {
-          return;
-        }
-        finalPayload = await getResult(start.job_id);
+      if (FINGERINGS_MODE === "sync") {
+        setStatus("running");
+        finalPayload = await postFingeringsSync(request);
+        setResultKey(null);
+        setResultUrl(null);
       } else {
-        setResultKey(start.result_s3_key);
-        setResultUrl(start.result_url ?? null);
+        const start = await postFingerings(request);
 
-        if (start.job_id) {
+        if (start.status === "QUEUED") {
+          setJobId(start.job_id);
+          const ok = await poll(start.job_id);
+          if (!ok) {
+            return;
+          }
           finalPayload = await getResult(start.job_id);
-        } else if (start.result_s3_key) {
-          finalPayload = await getResultByKey(start.result_s3_key);
         } else {
-          throw new Error("Cached result returned, but no result key was available.");
+          setResultKey(start.result_s3_key);
+          setResultUrl(start.result_url ?? null);
+
+          if (start.job_id) {
+            finalPayload = await getResult(start.job_id);
+          } else if (start.result_s3_key) {
+            finalPayload = await getResultByKey(start.result_s3_key);
+          } else {
+            throw new Error("Cached result returned, but no result key was available.");
+          }
         }
       }
 
@@ -723,6 +732,14 @@ export default function App() {
                   <a className="toolbarExportBtn toolbarExportBtn-muted" href={resultUrl} target="_blank" rel="noreferrer">
                     JSON
                   </a>
+                ) : displayPayload ? (
+                  <button
+                    className="toolbarExportBtn toolbarExportBtn-muted"
+                    type="button"
+                    onClick={() => downloadText("best-fingerings.json", JSON.stringify(displayPayload, null, 2), "application/json")}
+                  >
+                    JSON
+                  </button>
                 ) : null}
               </div>
             </div>
@@ -955,4 +972,138 @@ export default function App() {
       </div>
     </div>
   );
+}
+
+function navigateTo(path: string) {
+  window.history.pushState({}, "", path);
+  window.dispatchEvent(new PopStateEvent("popstate"));
+}
+
+function LandingPage() {
+  return (
+    <main className="landingPage">
+      <header className="landingNav">
+        <div className="landingBrand">
+          <div className="brandMark brandMark-portrait">
+            <img className="brandPortrait" src={brandPortrait} alt="Portrait mark for Best Fingerings" />
+          </div>
+          <div>
+            <div className="landingBrandName">Best Fingerings</div>
+            <div className="landingBrandTag">Piano fingering workspace</div>
+          </div>
+        </div>
+        <button className="landingNavButton" type="button" onClick={() => navigateTo("/app")}>
+          Open Workspace
+        </button>
+      </header>
+
+      <section className="landingHero">
+        <div className="landingHeroText">
+          <p className="landingEyebrow">MusicXML in. Fingered score out.</p>
+          <h1>Best Fingerings</h1>
+          <p className="landingLead">
+            Generate deterministic piano fingerings, inspect them directly on the score, preview hand positions on a
+            keyboard, then edit, lock, regenerate, and export MusicXML.
+          </p>
+          <div className="landingActions">
+            <button className="landingPrimary" type="button" onClick={() => navigateTo("/app")}>
+              Try the workspace
+            </button>
+            <a className="landingSecondary" href="#workflow">
+              See workflow
+            </a>
+          </div>
+        </div>
+
+        <div className="landingProductShot" aria-hidden="true">
+          <div className="landingScorePaper">
+            <div className="landingScoreTitle">Andantino</div>
+            <div className="landingStaff landingStaff-top">
+              <span>5</span>
+              <span>2</span>
+              <span>3</span>
+              <span>4</span>
+              <span>5</span>
+            </div>
+            <div className="landingStaff landingStaff-bottom">
+              <span>1</span>
+              <span>2</span>
+              <span>1</span>
+              <span>2</span>
+              <span>1</span>
+            </div>
+          </div>
+          <div className="landingKeyboardPreview">
+            {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((key) => (
+              <div
+                key={key}
+                className={[
+                  "landingKey",
+                  key === 5 || key === 6 ? "landingKey-rh" : "",
+                  key === 8 || key === 9 ? "landingKey-lh" : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+              />
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section id="workflow" className="landingBand">
+        <div className="landingSectionHeader">
+          <p className="landingEyebrow">Workflow</p>
+          <h2>Built around the way pianists actually inspect fingerings.</h2>
+        </div>
+        <div className="landingFeatureGrid">
+          <article className="landingFeature">
+            <h3>Upload MusicXML or MXL</h3>
+            <p>Bring in a piano score and generate fingerings without setting up an account.</p>
+          </article>
+          <article className="landingFeature">
+            <h3>Read it on the score</h3>
+            <p>Finger numbers are injected into the MusicXML and rendered in the notation view.</p>
+          </article>
+          <article className="landingFeature">
+            <h3>Preview the hand shape</h3>
+            <p>Click a measure and step through keyboard chunks for right and left hand positions.</p>
+          </article>
+          <article className="landingFeature">
+            <h3>Edit and lock</h3>
+            <p>Change individual notes, lock choices, regenerate, and preserve the decisions that matter.</p>
+          </article>
+        </div>
+      </section>
+
+      <section className="landingBand landingBand-split">
+        <div>
+          <p className="landingEyebrow">Engine</p>
+          <h2>Deterministic by design.</h2>
+        </div>
+        <p>
+          The current engine uses a cost-based beam search, so the same score and settings produce the same output.
+          It scores black-key comfort, hand direction, stretch, chord shape, articulation bias, hand size, and locks.
+        </p>
+      </section>
+
+      <section className="landingFinal">
+        <h2>Try it with a MusicXML score.</h2>
+        <button className="landingPrimary" type="button" onClick={() => navigateTo("/app")}>
+          Open Best Fingerings
+        </button>
+      </section>
+    </main>
+  );
+}
+
+export default function App() {
+  const [path, setPath] = useState(() => window.location.pathname);
+
+  useEffect(() => {
+    const onRouteChange = () => setPath(window.location.pathname);
+    window.addEventListener("popstate", onRouteChange);
+    return () => window.removeEventListener("popstate", onRouteChange);
+  }, []);
+
+  return path.startsWith("/app") ? <WorkspaceApp /> : <LandingPage />;
 }

@@ -28,7 +28,7 @@ from app.models.events import (
 # - you change anchor matching logic
 # - you change how pitches/onsets/voice/staff are derived
 # - you change warnings behavior that affects output payload
-PARSER_VERSION = "0.0.4"
+PARSER_VERSION = "0.0.5"
 
 # Bump ANCHOR_SCHEMA_VERSION whenever you change fields/meaning of MusicXMLAnchor
 ANCHOR_SCHEMA_VERSION = 2
@@ -373,6 +373,19 @@ def _staff_to_hand_and_label(part_el: stream.Stream, cfg: ParseConfig) -> Tuple[
     return Hand.RH, Staff.unknown
 
 
+def _staff_number_to_hand_and_label(
+    staff_num: Optional[int],
+    fallback_hand: Hand,
+    fallback_staff: Staff,
+    cfg: ParseConfig,
+) -> Tuple[Hand, Staff]:
+    if staff_num == 1:
+        return cfg.treble_hand, Staff.treble
+    if staff_num == 2:
+        return cfg.bass_hand, Staff.bass
+    return fallback_hand, fallback_staff
+
+
 def _abs_offset_in_part(el, part) -> float:
     try:
         return float(el.getOffsetInHierarchy(part))
@@ -552,22 +565,35 @@ def parse_musicxml_to_events(xml_bytes: bytes, cfg: Optional[ParseConfig] = None
                 idx = idx_counter.get(key_fallback, 0)
                 idx_counter[key_fallback] = idx + 1
                 note_ids = None
+                fallback_staff_num = staff_candidates[0] if staff_candidates else None
 
                 xml_anchor = MusicXMLAnchor(
                     part_id=str(part_id),
                     measure_no=meas_num,
                     voice=primary_voice,
-                    staff=staff_candidates[0] if staff_candidates else None,
+                    staff=fallback_staff_num,
                     note_ordinal=idx,
                     chord_ordinal=0,
                     is_chord=False,
                     is_grace=False,
                 )
                 idx_meas_voice = idx
+                event_hand, event_staff = _staff_number_to_hand_and_label(
+                    fallback_staff_num,
+                    hand_guess,
+                    staff_label,
+                    cfg,
+                )
             else:
                 _, group = found
                 any_anchor = group[0].anchor
                 idx_meas_voice = any_anchor.note_ordinal
+                event_hand, event_staff = _staff_number_to_hand_and_label(
+                    found_staff,
+                    hand_guess,
+                    staff_label,
+                    cfg,
+                )
 
                 # For chords, we want to preserve MusicXML document order so chord_ordinal stays meaningful.
                 group_pitches = [an.pitch_midi for an in group]
@@ -635,8 +661,8 @@ def parse_musicxml_to_events(xml_bytes: bytes, cfg: Optional[ParseConfig] = None
                 events.append(
                     NoteEvent(
                         event_id=event_id,
-                        hand=hand_guess,
-                        staff=staff_label,
+                        hand=event_hand,
+                        staff=event_staff,
                         t_beats=t,
                         t_meas_beats=t_meas,
                         duration_beats=dur,
@@ -664,8 +690,8 @@ def parse_musicxml_to_events(xml_bytes: bytes, cfg: Optional[ParseConfig] = None
                     events.append(
                         NoteEvent(
                             event_id=event_id,
-                            hand=hand_guess,
-                            staff=staff_label,
+                            hand=event_hand,
+                            staff=event_staff,
                             t_beats=t,
                             t_meas_beats=t_meas,
                             duration_beats=dur,
@@ -681,8 +707,8 @@ def parse_musicxml_to_events(xml_bytes: bytes, cfg: Optional[ParseConfig] = None
                     events.append(
                         ChordEvent(
                             event_id=event_id,
-                            hand=hand_guess,
-                            staff=staff_label,
+                            hand=event_hand,
+                            staff=event_staff,
                             t_beats=t,
                             t_meas_beats=t_meas,
                             duration_beats=dur,
