@@ -1007,7 +1007,7 @@ function LandingPage() {
           </p>
           <div className="landingActions">
             <button className="landingPrimary" type="button" onClick={() => navigateTo("/app")}>
-              Try the workspace
+              Try it out
             </button>
             <a className="landingSecondary" href="#workflow">
               See workflow
@@ -1017,7 +1017,7 @@ function LandingPage() {
 
         <div className="landingProductShot" aria-hidden="true">
           <div className="landingScorePaper">
-            <div className="landingScoreTitle">Andantino</div>
+            <div className="landingScoreTitle">Medtner Fairy Tale</div>
             <div className="landingStaff landingStaff-top">
               <span>5</span>
               <span>2</span>

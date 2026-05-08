@@ -37,8 +37,15 @@ type PointLike = {
   y?: number;
 };
 
+type ResolvedPoint = {
+  x: number;
+  y: number;
+};
+
 type BoundingBoxLike = {
   AbsolutePosition?: PointLike;
+  RelativePosition?: PointLike;
+  Parent?: BoundingBoxLike;
   BorderLeft?: number;
   BorderRight?: number;
   BorderTop?: number;
@@ -47,6 +54,14 @@ type BoundingBoxLike = {
 
 type GraphicalObjectLike = {
   PositionAndShape?: BoundingBoxLike;
+};
+
+type SourceMeasureLike = {
+  MeasureNumber?: number;
+  MeasureNumberXML?: number;
+  MeasureNumberPrinted?: number;
+  measureListIndex?: number;
+  getPrintedMeasureNumber?: () => number;
 };
 
 type GraphicalMusicPageLike = GraphicalObjectLike & {
@@ -62,6 +77,7 @@ type MusicSystemLike = GraphicalObjectLike & {
 
 type GraphicalMeasureLike = GraphicalObjectLike & {
   MeasureNumber?: number;
+  parentSourceMeasure?: SourceMeasureLike;
   staffEntries?: unknown[];
   ParentMusicSystem?: MusicSystemLike;
   ParentStaffLine?: StaffLineLike;
@@ -78,17 +94,19 @@ type GraphicalMusicSheetLike = {
   MusicPages?: GraphicalMusicPageLike[];
 };
 
-type ResolvedPointerTarget = {
-  target: ScorePassageTarget;
-  rect: HighlightRect;
-};
-
 type MeasureRegion = {
   measureNumber: number;
   system: MusicSystemLike;
   bounds: RectBounds;
   rowIndex: number;
   rowCount: number;
+};
+
+type MeasureHitRegion = {
+  key: string;
+  measureNumber: number;
+  target: ScorePassageTarget;
+  rect: HighlightRect;
 };
 
 export function ScoreView({
@@ -104,14 +122,15 @@ export function ScoreView({
 }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const osmdRef = useRef<OSMD.OpenSheetMusicDisplay | null>(null);
+  const [measureHitRegions, setMeasureHitRegions] = useState<MeasureHitRegion[]>([]);
   const [hoverRect, setHoverRect] = useState<HighlightRect | null>(null);
-  const [selectedRect, setSelectedRect] = useState<HighlightRect | null>(null);
 
   const renderCurrentView = useEffectEvent((host: HTMLDivElement, osmd: OSMD.OpenSheetMusicDisplay) => {
     const instance = osmd as OSMD.OpenSheetMusicDisplay & { Zoom: number };
     instance.Zoom = zoom;
     instance.render();
     applyPaginationAndStyling(host, viewMode, pageIndex, zoom, onPageCountChange);
+    setMeasureHitRegions(buildMeasureHitRegions(host, osmd, pageIndex));
   });
 
   useEffect(() => {
@@ -133,7 +152,8 @@ export function ScoreView({
         backend: "svg",
         drawingParameters: "compact",
         pageFormat: "Letter_P",
-        newPageFromXML: false,
+        newPageFromXML: true,
+        newSystemFromXML: true,
       });
 
       osmdRef.current = osmd;
@@ -147,8 +167,8 @@ export function ScoreView({
     return () => {
       cancelled = true;
       osmdRef.current = null;
+      setMeasureHitRegions([]);
       setHoverRect(null);
-      setSelectedRect(null);
     };
   }, [xmlText]);
 
@@ -163,92 +183,82 @@ export function ScoreView({
   }, [zoom, viewMode, pageIndex, xmlText]);
 
   useEffect(() => {
-    setSelectedRect(resolveTargetRectFromSelection(hostRef.current, osmdRef.current, pageIndex, selectedTarget));
-  }, [pageIndex, selectedTarget, xmlText, zoom]);
-
-  function resolvePointerTarget(clientX: number, clientY: number): ResolvedPointerTarget | null {
     const host = hostRef.current;
-    const osmd = osmdRef.current;
-    const graphicSheet = (osmd as OSMD.OpenSheetMusicDisplay & {
-      GraphicSheet?: GraphicalMusicSheetLike;
-    }).GraphicSheet;
+    if (!host) return;
 
-    if (!host || !graphicSheet) {
-      return null;
-    }
+    let frameId: number | null = null;
+    const rebuild = () => {
+      if (frameId !== null) {
+        window.cancelAnimationFrame(frameId);
+      }
 
-    const visibleSvg = getVisibleSvg(host, pageIndex);
-    if (!visibleSvg) {
-      return null;
-    }
-
-    const svgRect = visibleSvg.getBoundingClientRect();
-    if (
-      clientX < svgRect.left
-      || clientX > svgRect.right
-      || clientY < svgRect.top
-      || clientY > svgRect.bottom
-    ) {
-      return null;
-    }
-
-    const visiblePage = getVisiblePage(graphicSheet, pageIndex);
-    if (!visiblePage) {
-      return null;
-    }
-
-    const osmdPoint = clientPointToPagePoint(visibleSvg, visiblePage, clientX, clientY);
-    if (!osmdPoint) {
-      return null;
-    }
-
-    const measureRegion = findVisiblePageMeasureRegion(visibleSvg, visiblePage, clientY, osmdPoint);
-    if (!measureRegion) {
-      return null;
-    }
-
-    const target: ScorePassageTarget = {
-      measureNumber: measureRegion.measureNumber,
-      staffEntryIndex: 0,
-      staffEntryCount: 1,
-      tMeasBeats: null,
+      frameId = window.requestAnimationFrame(() => {
+        const osmd = osmdRef.current;
+        if (osmd) {
+          setMeasureHitRegions(buildMeasureHitRegions(host, osmd, pageIndex));
+        }
+      });
     };
 
-    const rect = buildMeasureHighlightRect(host, visibleSvg, visiblePage, measureRegion, target);
-    if (!rect) {
-      return null;
-    }
+    host.addEventListener("scroll", rebuild, { passive: true });
+    window.addEventListener("resize", rebuild);
 
-    return { target, rect };
-  }
+    return () => {
+      host.removeEventListener("scroll", rebuild);
+      window.removeEventListener("resize", rebuild);
+      if (frameId !== null) {
+        window.cancelAnimationFrame(frameId);
+      }
+    };
+  }, [pageIndex, xmlText, zoom, viewMode]);
+
+  const selectedRect = measureHitRegions.find((region) => sameTarget(region.target, selectedTarget))?.rect ?? null;
 
   return (
     <div className="osmdHostWrap">
       <div
         ref={hostRef}
         className="osmdHost scoreInteractiveHost"
-        onMouseMove={(event) => {
-          const resolved = resolvePointerTarget(event.clientX, event.clientY);
-          if (!resolved) {
-            setHoverRect(null);
-            onHoverTargetChange?.(null);
-            return;
-          }
+      />
 
-          setHoverRect(resolved.rect);
-          onHoverTargetChange?.(resolved.target);
-        }}
+      <div
+        className="measureOverlayLayer"
         onMouseLeave={() => {
           setHoverRect(null);
           onHoverTargetChange?.(null);
         }}
-        onClick={(event) => {
-          const resolved = resolvePointerTarget(event.clientX, event.clientY);
-          if (resolved) {
-            onSelectTarget?.(resolved.target);
-          }
-        }}
-      />
+      >
+        {measureHitRegions.map((region) => (
+          <button
+            key={region.key}
+            type="button"
+            className="measureHitArea"
+            aria-label={`Measure ${region.measureNumber}`}
+            data-measure-number={region.measureNumber}
+            style={{
+              left: region.rect.left,
+              top: region.rect.top,
+              width: region.rect.width,
+              height: region.rect.height,
+            }}
+            onMouseEnter={() => {
+              setHoverRect(region.rect);
+              onHoverTargetChange?.(region.target);
+            }}
+            onFocus={() => {
+              setHoverRect(region.rect);
+              onHoverTargetChange?.(region.target);
+            }}
+            onBlur={() => {
+              setHoverRect(null);
+              onHoverTargetChange?.(null);
+            }}
+            onClick={() => {
+              onSelectTarget?.(region.target);
+            }}
+          />
+        ))}
+      </div>
 
       {selectedRect ? (
         <div
@@ -337,72 +347,47 @@ function getVisiblePage(graphicSheet: GraphicalMusicSheetLike, pageIndex: number
   return pages[clamp(pageIndex, 0, Math.max(0, pages.length - 1))] ?? null;
 }
 
-function findVisiblePageMeasureRegion(
-  visibleSvg: SVGSVGElement,
-  visiblePage: GraphicalMusicPageLike,
-  clientY: number,
-  osmdPoint: { x: number; y: number },
+function buildMeasureHitRegions(
+  host: HTMLDivElement,
+  osmd: OSMD.OpenSheetMusicDisplay,
+  pageIndex: number,
 ) {
-  const measureRegions = getVisiblePageMeasureRegions(visiblePage);
-  const rowCount = Math.max(1, ...measureRegions.map((region) => region.rowCount));
-  const rowIndex = getDomRowIndex(visibleSvg, rowCount, clientY);
-  const rowRegions = measureRegions.filter((region) => region.rowIndex === rowIndex);
+  const graphicSheet = (osmd as OSMD.OpenSheetMusicDisplay & {
+    GraphicSheet?: GraphicalMusicSheetLike;
+  }).GraphicSheet;
+  const visiblePage = graphicSheet ? getVisiblePage(graphicSheet, pageIndex) : null;
+  const visibleSvg = getVisibleSvg(host, pageIndex);
 
-  const hit = rowRegions.find((region) => (
-    osmdPoint.x >= region.bounds.left - 4
-    && osmdPoint.x <= region.bounds.right + 4
-  ));
-
-  if (hit) {
-    return hit;
+  if (!visiblePage || !visibleSvg) {
+    return [];
   }
 
-  const nearestRowRegion = rowRegions
-    .map((region) => ({
-      region,
-      distance: distanceToBand(osmdPoint.x, region.bounds.left, region.bounds.right),
-    }))
-    .sort((left, right) => left.distance - right.distance)[0];
+  const regions = getVisiblePageMeasureRegions(visiblePage);
 
-  if (nearestRowRegion && nearestRowRegion.distance <= 18) {
-    return nearestRowRegion.region;
-  }
+  const hitRegions = regions
+    .map((region, index) => {
+      const target: ScorePassageTarget = {
+        measureNumber: region.measureNumber,
+        staffEntryIndex: 0,
+        staffEntryCount: 1,
+        tMeasBeats: null,
+      };
+      const rect = buildMeasureHighlightRect(host, visibleSvg, visiblePage, region, target);
 
-  const systems = visiblePage.MusicSystems ?? [];
-  if (systems.length === 0) {
-    return null;
-  }
+      if (!rect) {
+        return null;
+      }
 
-  const system = findBestSystemForPoint(systems, osmdPoint);
-  if (!system) {
-    return null;
-  }
+      return {
+        key: `${pageIndex}-${region.measureNumber}-${index}`,
+        measureNumber: region.measureNumber,
+        target,
+        rect,
+      };
+    })
+    .filter((region): region is MeasureHitRegion => Boolean(region));
 
-  const systemRegions = getSystemMeasureRegions(system);
-  const exactSystemHit = systemRegions.find((region) => (
-    osmdPoint.x >= region.bounds.left - 4
-    && osmdPoint.x <= region.bounds.right + 4
-  ));
-  if (exactSystemHit) {
-    return exactSystemHit;
-  }
-
-  const nearestSystemRegion = systemRegions
-    .map((region) => ({
-      region,
-      distance: distanceToBand(osmdPoint.x, region.bounds.left, region.bounds.right),
-    }))
-    .sort((left, right) => left.distance - right.distance)[0];
-
-  return nearestSystemRegion && nearestSystemRegion.distance <= 18
-    ? nearestSystemRegion.region
-    : null;
-}
-
-function getDomRowIndex(visibleSvg: SVGSVGElement, rowCount: number, clientY: number) {
-  const svgRect = visibleSvg.getBoundingClientRect();
-  const rowHeight = Math.max(1, svgRect.height / Math.max(1, rowCount));
-  return clamp(Math.floor((clientY - svgRect.top) / rowHeight), 0, rowCount - 1);
+  return hitRegions;
 }
 
 function getVisiblePageMeasureRegions(visiblePage: GraphicalMusicPageLike) {
@@ -412,7 +397,8 @@ function getVisiblePageMeasureRegions(visiblePage: GraphicalMusicPageLike) {
     const measures = getAllGraphicalMeasuresForSystem(system);
 
     measures.forEach((measure) => {
-      if (typeof measure.MeasureNumber !== "number" || measure.MeasureNumber < 0 || measure.IsExtraGraphicalMeasure) {
+      const measureNumber = getStableMeasureNumber(measure);
+      if (measureNumber == null || measureNumber < 0 || measure.IsExtraGraphicalMeasure) {
         return;
       }
 
@@ -425,9 +411,9 @@ function getVisiblePageMeasureRegions(visiblePage: GraphicalMusicPageLike) {
         return;
       }
 
-      const current = grouped.get(measure.MeasureNumber) ?? [];
+      const current = grouped.get(measureNumber) ?? [];
       current.push(bounds);
-      grouped.set(measure.MeasureNumber, current);
+      grouped.set(measureNumber, current);
     });
 
     return Array.from(grouped.entries())
@@ -452,26 +438,7 @@ function getVisiblePageMeasureRegions(visiblePage: GraphicalMusicPageLike) {
       .filter((region): region is MeasureRegion => Boolean(region));
   });
 
-  return normalizeMeasureRows(rawRegions);
-}
-
-function findBestSystemForPoint(systems: MusicSystemLike[], osmdPoint: { x: number; y: number }) {
-  const candidates = systems
-    .map((system) => {
-      const bounds = getObjectBounds(system);
-      if (!bounds) {
-        return null;
-      }
-
-      const withinX = osmdPoint.x >= bounds.left - 12 && osmdPoint.x <= bounds.right + 12;
-      const verticalDistance = distanceToBand(osmdPoint.y, bounds.top, bounds.bottom);
-      return { system, withinX, verticalDistance };
-    })
-    .filter((candidate): candidate is { system: MusicSystemLike; withinX: boolean; verticalDistance: number } => Boolean(candidate))
-    .filter((candidate) => candidate.withinX)
-    .sort((left, right) => left.verticalDistance - right.verticalDistance);
-
-  return candidates[0]?.system ?? null;
+  return normalizeMeasureRowsByVertical(rawRegions);
 }
 
 function buildMeasureHighlightRect(
@@ -500,165 +467,51 @@ function buildMeasureHighlightRect(
   );
 }
 
-function resolveTargetRectFromSelection(
-  host: HTMLDivElement | null,
-  osmd: OSMD.OpenSheetMusicDisplay | null,
-  pageIndex: number,
-  target: ScorePassageTarget | null,
-) {
-  if (!host || !osmd || !target) {
-    return null;
-  }
-
-  const graphicSheet = (osmd as OSMD.OpenSheetMusicDisplay & {
-    GraphicSheet?: GraphicalMusicSheetLike;
-  }).GraphicSheet;
-  if (!graphicSheet) {
-    return null;
-  }
-
-  const visiblePage = getVisiblePage(graphicSheet, pageIndex);
-  const visibleSvg = getVisibleSvg(host, pageIndex);
-  if (!visiblePage || !visibleSvg) {
-    return null;
-  }
-
-  const measureRegion = getVisiblePageMeasureRegions(visiblePage)
-    .find((region) => region.measureNumber === target.measureNumber) ?? null;
-  if (measureRegion) {
-    return buildMeasureHighlightRect(host, visibleSvg, visiblePage, measureRegion, target);
-  }
-
-  return null;
-}
-
-function getSystemMeasureRegions(system: MusicSystemLike) {
-  const grouped = new Map<number, RectBounds[]>();
-  const systemBounds = getObjectBounds(system);
-  const staffLineBounds = getScopedStaffLines(system)
-    .map(getObjectBounds)
-    .filter((bounds): bounds is RectBounds => Boolean(bounds));
-
-  const systemMeasures = getGraphicalMeasuresForSystem(system);
-  systemMeasures.forEach((measure) => {
-    if (typeof measure.MeasureNumber !== "number" || measure.MeasureNumber < 0 || measure.IsExtraGraphicalMeasure) {
-      return;
-    }
-
-    if (typeof measure.isVisible === "function" && !measure.isVisible()) {
-      return;
-    }
-
-    const bounds = getObjectBounds(measure);
-    if (!bounds) {
-      return;
-    }
-
-    const current = grouped.get(measure.MeasureNumber) ?? [];
-    current.push(bounds);
-    grouped.set(measure.MeasureNumber, current);
-  });
-
-  const rawRegions = Array.from(grouped.entries())
-    .map(([measureNumber, boundsList]) => {
-      if (boundsList.length === 0) {
-        return null;
-      }
-
-      const rawBounds = {
-        left: Math.min(...boundsList.map((bounds) => bounds.left)),
-        right: Math.max(...boundsList.map((bounds) => bounds.right)),
-        top: Math.min(...boundsList.map((bounds) => bounds.top)),
-        bottom: Math.max(...boundsList.map((bounds) => bounds.bottom)),
-      };
-
-      return {
-        measureNumber,
-        system,
-        rowIndex: 0,
-        rowCount: 1,
-        bounds: rawBounds,
-      };
-    })
-    .filter((region): region is MeasureRegion => Boolean(region))
-    .sort((left, right) => (
-      left.bounds.left - right.bounds.left
-      || left.measureNumber - right.measureNumber
-    ));
-
-  if (rawRegions.length === 0) {
-    return rawRegions.sort((left, right) => left.measureNumber - right.measureNumber);
-  }
-
-  const systemVisualBounds = {
-    left: systemBounds?.left ?? Math.min(...rawRegions.map((region) => region.bounds.left)),
-    right: systemBounds?.right ?? Math.max(...rawRegions.map((region) => region.bounds.right)),
-    top: staffLineBounds.length > 0
-      ? Math.min(...staffLineBounds.map((bounds) => bounds.top)) - 8
-      : Math.min(...rawRegions.map((region) => region.bounds.top)) - 6,
-    bottom: staffLineBounds.length > 0
-      ? Math.max(...staffLineBounds.map((bounds) => bounds.bottom)) + 8
-      : Math.max(...rawRegions.map((region) => region.bounds.bottom)) + 6,
-  };
-
-  return rawRegions
-    .map((region, index) => {
-      const previous = rawRegions[index - 1] ?? null;
-      const next = rawRegions[index + 1] ?? null;
-      const previousBoundary = previous ? midpoint(previous.bounds.right, region.bounds.left) : systemVisualBounds.left;
-      const nextBoundary = next ? midpoint(region.bounds.right, next.bounds.left) : systemVisualBounds.right;
-
-      return {
-        ...region,
-        bounds: {
-          left: Math.min(region.bounds.left, Math.max(systemVisualBounds.left, previousBoundary)),
-          right: Math.max(region.bounds.right, Math.min(systemVisualBounds.right, nextBoundary)),
-          top: systemVisualBounds.top,
-          bottom: systemVisualBounds.bottom,
-        },
-      };
-    })
-    .sort((left, right) => left.measureNumber - right.measureNumber);
-}
-
 function midpoint(left: number, right: number) {
   return left + (right - left) / 2;
 }
 
-function normalizeMeasureRows(regions: MeasureRegion[]) {
-  const rows: MeasureRegion[][] = [];
-  const sortedByMeasure = [...regions].sort((left, right) => left.measureNumber - right.measureNumber);
+function normalizeMeasureRowsByVertical(regions: MeasureRegion[]) {
+  const rows: Array<{ regions: MeasureRegion[]; top: number; bottom: number }> = [];
+  const sortedByVerticalPosition = [...regions].sort((left, right) => (
+    left.bounds.top - right.bounds.top
+    || left.bounds.left - right.bounds.left
+    || left.measureNumber - right.measureNumber
+  ));
 
-  sortedByMeasure.forEach((region) => {
+  sortedByVerticalPosition.forEach((region) => {
     const currentRow = rows[rows.length - 1] ?? null;
 
-    if (!currentRow) {
-      rows.push([region]);
+    if (!currentRow || region.bounds.top > currentRow.bottom + 3) {
+      rows.push({
+        regions: [region],
+        top: region.bounds.top,
+        bottom: region.bounds.bottom,
+      });
       return;
     }
 
-    const previous = currentRow[currentRow.length - 1];
-    const leftReset = previous && region.bounds.left < previous.bounds.left - 20;
-
-    if (!leftReset) {
-      currentRow.push(region);
-      return;
-    }
-
-    rows.push([region]);
+    currentRow.regions.push(region);
+    currentRow.top = Math.min(currentRow.top, region.bounds.top);
+    currentRow.bottom = Math.max(currentRow.bottom, region.bounds.bottom);
   });
 
   const rowCount = Math.max(1, rows.length);
 
   return rows.flatMap((row, rowIndex) => {
-    const sortedRow = [...row].sort((left, right) => (
+    const sortedRow = [...row.regions].sort((left, right) => (
       left.bounds.left - right.bounds.left
       || left.measureNumber - right.measureNumber
     ));
-    const rowTop = Math.min(...sortedRow.map((region) => region.bounds.top)) - 8;
-    const rowBottom = Math.max(...sortedRow.map((region) => region.bounds.bottom)) + 8;
     const rowLeft = Math.min(...sortedRow.map((region) => region.bounds.left));
     const rowRight = Math.max(...sortedRow.map((region) => region.bounds.right));
+    const rowCenter = midpoint(row.top, row.bottom);
+    const previousRow = rows[rowIndex - 1] ?? null;
+    const nextRow = rows[rowIndex + 1] ?? null;
+    const previousRowCenter = previousRow ? midpoint(previousRow.top, previousRow.bottom) : null;
+    const nextRowCenter = nextRow ? midpoint(nextRow.top, nextRow.bottom) : null;
+    const visualTop = previousRowCenter === null ? row.top - 8 : midpoint(previousRowCenter, rowCenter);
+    const visualBottom = nextRowCenter === null ? row.bottom + 8 : midpoint(rowCenter, nextRowCenter);
 
     return sortedRow.map((region, index) => {
       const previous = sortedRow[index - 1] ?? null;
@@ -673,29 +526,12 @@ function normalizeMeasureRows(regions: MeasureRegion[]) {
         bounds: {
           left: Math.min(region.bounds.left, previousBoundary),
           right: Math.max(region.bounds.right, nextBoundary),
-          top: rowTop,
-          bottom: rowBottom,
+          top: visualTop,
+          bottom: visualBottom,
         },
       };
     });
   }).sort((left, right) => left.measureNumber - right.measureNumber);
-}
-
-function getGraphicalMeasuresForSystem(system: MusicSystemLike) {
-  const staffLines = getScopedStaffLines(system);
-  const fromStaffLines = staffLines
-    .flatMap((staffLine) => staffLine.Measures ?? [])
-    .filter(Boolean)
-    .filter((measure) => measureBelongsToSystem(measure, system));
-  if (fromStaffLines.length > 0) {
-    return dedupeMeasures(fromStaffLines);
-  }
-
-  const fromGraphicalMeasures = (system.GraphicalMeasures ?? [])
-    .flat()
-    .filter(Boolean)
-    .filter((measure) => measureBelongsToSystem(measure, system));
-  return dedupeMeasures(fromGraphicalMeasures);
 }
 
 function getAllGraphicalMeasuresForSystem(system: MusicSystemLike) {
@@ -710,16 +546,36 @@ function getScopedStaffLines(system: MusicSystemLike) {
     .filter((staffLine) => !staffLine.ParentMusicSystem || staffLine.ParentMusicSystem === system);
 }
 
-function measureBelongsToSystem(measure: GraphicalMeasureLike, system: MusicSystemLike) {
-  if (measure.ParentMusicSystem) {
-    return measure.ParentMusicSystem === system;
+function getStableMeasureNumber(measure: GraphicalMeasureLike) {
+  const sourceMeasure = measure.parentSourceMeasure;
+  const sourceCandidates = [
+    sourceMeasure?.MeasureNumber,
+    sourceMeasure?.MeasureNumberXML,
+    sourceMeasure?.MeasureNumberPrinted,
+  ];
+
+  for (const candidate of sourceCandidates) {
+    if (typeof candidate === "number" && Number.isFinite(candidate)) {
+      return candidate;
+    }
   }
 
-  if (measure.ParentStaffLine?.ParentMusicSystem) {
-    return measure.ParentStaffLine.ParentMusicSystem === system;
+  if (typeof sourceMeasure?.getPrintedMeasureNumber === "function") {
+    const printed = sourceMeasure.getPrintedMeasureNumber();
+    if (typeof printed === "number" && Number.isFinite(printed)) {
+      return printed;
+    }
   }
 
-  return true;
+  if (typeof measure.MeasureNumber === "number" && Number.isFinite(measure.MeasureNumber)) {
+    return measure.MeasureNumber;
+  }
+
+  if (typeof sourceMeasure?.measureListIndex === "number" && Number.isFinite(sourceMeasure.measureListIndex)) {
+    return sourceMeasure.measureListIndex + 1;
+  }
+
+  return null;
 }
 
 function dedupeMeasures(measures: GraphicalMeasureLike[]) {
@@ -735,16 +591,14 @@ function dedupeMeasures(measures: GraphicalMeasureLike[]) {
 
 function getObjectBounds(object: GraphicalObjectLike | null) {
   const box = object?.PositionAndShape;
-  const absoluteX = box?.AbsolutePosition?.x;
-  const absoluteY = box?.AbsolutePosition?.y;
+  const origin = getBoundingBoxOrigin(box);
   const leftBorder = box?.BorderLeft;
   const rightBorder = box?.BorderRight;
   const topBorder = box?.BorderTop;
   const bottomBorder = box?.BorderBottom;
 
   if (
-    typeof absoluteX !== "number"
-    || typeof absoluteY !== "number"
+    !origin
     || typeof leftBorder !== "number"
     || typeof rightBorder !== "number"
     || typeof topBorder !== "number"
@@ -754,11 +608,52 @@ function getObjectBounds(object: GraphicalObjectLike | null) {
   }
 
   return {
-    left: absoluteX + leftBorder,
-    right: absoluteX + rightBorder,
-    top: absoluteY + topBorder,
-    bottom: absoluteY + bottomBorder,
+    left: origin.x + leftBorder,
+    right: origin.x + rightBorder,
+    top: origin.y + topBorder,
+    bottom: origin.y + bottomBorder,
   };
+}
+
+function getBoundingBoxOrigin(box: BoundingBoxLike | null | undefined): ResolvedPoint | null {
+  if (!box) {
+    return null;
+  }
+
+  const relativeX = box.RelativePosition?.x;
+  const relativeY = box.RelativePosition?.y;
+
+  if (typeof relativeX === "number" && typeof relativeY === "number") {
+    let x = 0;
+    let y = 0;
+    let current: BoundingBoxLike | undefined = box;
+    let guard = 0;
+
+    while (current && guard < 40) {
+      const currentRelativeX = current.RelativePosition?.x;
+      const currentRelativeY = current.RelativePosition?.y;
+
+      if (typeof currentRelativeX !== "number" || typeof currentRelativeY !== "number") {
+        break;
+      }
+
+      x += currentRelativeX;
+      y += currentRelativeY;
+      current = current.Parent;
+      guard += 1;
+    }
+
+    return { x, y };
+  }
+
+  const absoluteX = box.AbsolutePosition?.x;
+  const absoluteY = box.AbsolutePosition?.y;
+
+  if (typeof absoluteX === "number" && typeof absoluteY === "number") {
+    return { x: absoluteX, y: absoluteY };
+  }
+
+  return null;
 }
 
 function osmdRectToDomRect(
@@ -771,49 +666,19 @@ function osmdRectToDomRect(
   const hostRect = host.getBoundingClientRect();
   const svgRect = visibleSvg.getBoundingClientRect();
   const pageWidth = Math.max(1, pageBounds.right - pageBounds.left);
-  const pageHeight = Math.max(1, pageBounds.bottom - pageBounds.top);
-  const scaleX = svgRect.width / pageWidth;
-  const scaleY = svgRect.height / pageHeight;
+  const scale = svgRect.width / pageWidth;
 
-  const left = svgRect.left - hostRect.left + (rect.left - pageBounds.left) * scaleX;
-  const top = svgRect.top - hostRect.top + (rect.top - pageBounds.top) * scaleY;
-  const width = Math.max(18, (rect.right - rect.left) * scaleX);
-  const height = Math.max(36, (rect.bottom - rect.top) * scaleY);
+  const left = svgRect.left - hostRect.left + (rect.left - pageBounds.left) * scale;
+  const svgTop = svgRect.top - hostRect.top;
+  const svgBottom = svgTop + svgRect.height;
+  const rawTop = svgTop + (rect.top - pageBounds.top) * scale;
+  const rawBottom = rawTop + (rect.bottom - rect.top) * scale;
+  const top = clamp(rawTop, svgTop, Math.max(svgTop, svgBottom - 36));
+  const bottom = clamp(rawBottom, top + 36, svgBottom);
+  const width = Math.max(18, (rect.right - rect.left) * scale);
+  const height = Math.max(36, bottom - top);
 
   return { left, top, width, height, target };
-}
-
-function clientPointToPagePoint(
-  visibleSvg: SVGSVGElement,
-  visiblePage: GraphicalMusicPageLike,
-  clientX: number,
-  clientY: number,
-) {
-  const pageBounds = getObjectBounds(visiblePage);
-  if (!pageBounds) {
-    return null;
-  }
-
-  const svgRect = visibleSvg.getBoundingClientRect();
-  const pageWidth = Math.max(1, pageBounds.right - pageBounds.left);
-  const pageHeight = Math.max(1, pageBounds.bottom - pageBounds.top);
-  const scaleX = pageWidth / Math.max(1, svgRect.width);
-  const scaleY = pageHeight / Math.max(1, svgRect.height);
-
-  return {
-    x: pageBounds.left + (clientX - svgRect.left) * scaleX,
-    y: pageBounds.top + (clientY - svgRect.top) * scaleY,
-  };
-}
-
-function distanceToBand(value: number, min: number, max: number) {
-  if (value < min) {
-    return min - value;
-  }
-  if (value > max) {
-    return value - max;
-  }
-  return 0;
 }
 
 function sameTarget(left: ScorePassageTarget | null, right: ScorePassageTarget | null) {
